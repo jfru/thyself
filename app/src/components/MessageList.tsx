@@ -22,26 +22,30 @@ export function MessageList({ messages }: MessageListProps) {
     );
   }
 
+  const turns: { user: Message; responses: AssistantMessage[] }[] = [];
+  for (const msg of messages) {
+    if (msg.role === "user") {
+      turns.push({ user: msg, responses: [] });
+    } else if (turns.length > 0) {
+      turns[turns.length - 1].responses.push(msg as AssistantMessage);
+    }
+  }
+
   return (
     <div className="pb-6">
-      {messages.map((msg, i) => {
-        if (msg.role === "user") {
-          return (
-            <UserMessage
-              key={i}
-              content={msg.content}
-              timestamp={msg.timestamp}
-            />
-          );
-        }
-        return (
-          <div key={i} className="px-4 py-4 max-w-3xl mx-auto">
-            <AgentResponse
-              message={msg as AssistantMessage}
-            />
-          </div>
-        );
-      })}
+      {turns.map((turn, i) => (
+        <div key={i}>
+          <UserMessage
+            content={turn.user.content}
+            timestamp={turn.user.timestamp}
+          />
+          {turn.responses.map((resp, j) => (
+            <div key={j} className="px-4 py-4 max-w-3xl mx-auto">
+              <AgentResponse message={resp} />
+            </div>
+          ))}
+        </div>
+      ))}
     </div>
   );
 }
