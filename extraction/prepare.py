@@ -373,6 +373,7 @@ def build_batch_chunk(
         start_date=batch.start_date,
         end_date=batch.end_date,
         approx_tokens=batch.approx_tokens,
+        months_list=", ".join(batch.months),
     )
 
     if prev_summary:
