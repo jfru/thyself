@@ -1,6 +1,7 @@
 use crate::claude::StreamEvent;
 use crate::commands::run_chat_loop;
 use crate::db::{self, get_data_dir, DbState};
+use crate::sessions;
 use crate::tools::get_tool_definitions;
 use axum::{
     extract::State as AxumState,
@@ -56,6 +57,10 @@ pub async fn start_dev_server() {
         .route("/api/list_files", post(handle_list_files))
         .route("/api/stream_chat", post(handle_stream_chat))
         .route("/api/stop_chat", post(handle_stop_chat))
+        .route("/api/create_session", post(handle_create_session))
+        .route("/api/list_sessions", get(handle_list_sessions))
+        .route("/api/load_session", post(handle_load_session))
+        .route("/api/save_session_messages", post(handle_save_session_messages))
         .route("/api/data_dir", get(handle_data_dir))
         .route("/api/tool_defs", get(handle_tool_defs))
         .route("/api/health", get(handle_health))
@@ -288,5 +293,87 @@ async fn handle_stop_chat(
         (StatusCode::OK, Json(json!({"status": "stopped"})))
     } else {
         (StatusCode::NOT_FOUND, Json(json!({"error": "stream not found"})))
+    }
+}
+
+async fn handle_create_session() -> impl IntoResponse {
+    match sessions::create_session() {
+        Ok(session) => (
+            StatusCode::OK,
+            Json(serde_json::to_value(&session).unwrap_or(json!({}))),
+        ),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e}))),
+    }
+}
+
+async fn handle_list_sessions() -> impl IntoResponse {
+    match sessions::read_manifest() {
+        Ok(manifest) => {
+            let summary: Vec<Value> = manifest
+                .iter()
+                .map(|s| {
+                    json!({
+                        "id": s.id,
+                        "name": s.name,
+                        "createdAt": s.created_at,
+                        "status": s.status,
+                        "summaryFile": s.summary_file,
+                    })
+                })
+                .collect();
+            Json(json!(summary))
+        }
+        Err(_) => Json(json!([])),
+    }
+}
+
+#[derive(Deserialize)]
+struct LoadSessionReq {
+    #[serde(rename = "sessionId")]
+    session_id: String,
+}
+
+async fn handle_load_session(Json(body): Json<LoadSessionReq>) -> impl IntoResponse {
+    let manifest = match sessions::read_manifest() {
+        Ok(m) => m,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e}))),
+    };
+    let session = match manifest.iter().find(|s| s.id == body.session_id) {
+        Some(s) => s,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "Session not found"})),
+            )
+        }
+    };
+
+    let summary = session.summary_file.as_ref().and_then(|file| {
+        let path = get_data_dir().join("sessions").join(file);
+        std::fs::read_to_string(&path).ok()
+    });
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "session": session,
+            "summary": summary,
+        })),
+    )
+}
+
+#[derive(Deserialize)]
+struct SaveSessionMessagesReq {
+    #[serde(rename = "sessionId")]
+    session_id: String,
+    messages: Value,
+}
+
+async fn handle_save_session_messages(
+    Json(body): Json<SaveSessionMessagesReq>,
+) -> impl IntoResponse {
+    match sessions::save_messages(&body.session_id, &body.messages) {
+        Ok(_) => (StatusCode::OK, Json(json!({"status": "ok"}))),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e}))),
     }
 }

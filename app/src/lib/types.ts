@@ -62,6 +62,15 @@ export interface StreamEvent {
   };
 }
 
+export interface SessionMeta {
+  id: string;
+  name: string;
+  createdAt: string;
+  status: "active" | "completed";
+  summaryFile: string | null;
+  chatHistory: Message[];
+}
+
 export interface Session {
   filename: string;
   title: string;

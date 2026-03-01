@@ -2,6 +2,7 @@ mod claude;
 mod commands;
 mod db;
 mod dev_server;
+mod sessions;
 mod tools;
 
 use commands::*;
@@ -57,6 +58,10 @@ pub fn run() {
             stream_chat,
             get_data_dir_path,
             get_tool_defs,
+            create_session,
+            list_sessions,
+            load_session,
+            save_session_messages,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

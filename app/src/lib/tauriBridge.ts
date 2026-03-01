@@ -17,11 +17,11 @@ export async function invokeCommand<T = unknown>(
     return invoke<T>(cmd, args);
   }
 
-  const method = cmd === "data_dir" || cmd === "tool_defs" || cmd === "get_data_dir_path" || cmd === "get_tool_defs"
-    ? "GET"
-    : "POST";
+  const getCommands = new Set([
+    "data_dir", "tool_defs", "get_data_dir_path", "get_tool_defs", "list_sessions",
+  ]);
+  const method = getCommands.has(cmd) ? "GET" : "POST";
 
-  // Map Tauri command names to HTTP endpoint names
   const endpointMap: Record<string, string> = {
     get_data_dir_path: "data_dir",
     get_tool_defs: "tool_defs",

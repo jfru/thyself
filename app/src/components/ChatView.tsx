@@ -1,5 +1,6 @@
 import { MessageList } from "./MessageList";
 import { InputBox } from "./InputBox";
+import { SessionSummaryBlock } from "./SessionSummaryBlock";
 import { useAutoScroll } from "../hooks/useAutoScroll";
 import type { Message } from "../lib/types";
 import { ArrowDown } from "lucide-react";
@@ -9,9 +10,20 @@ interface ChatViewProps {
   isStreaming: boolean;
   onSend: (text: string) => void;
   onStop: () => void;
+  sessionSummary?: string | null;
+  sessionName?: string | null;
+  isReadOnly?: boolean;
 }
 
-export function ChatView({ messages, isStreaming, onSend, onStop }: ChatViewProps) {
+export function ChatView({
+  messages,
+  isStreaming,
+  onSend,
+  onStop,
+  sessionSummary,
+  sessionName,
+  isReadOnly,
+}: ChatViewProps) {
   const { containerRef, isAtBottom, scrollToBottom } = useAutoScroll([
     messages,
   ]);
@@ -19,6 +31,9 @@ export function ChatView({ messages, isStreaming, onSend, onStop }: ChatViewProp
   return (
     <div className="flex flex-1 flex-col min-h-0">
       <div ref={containerRef} className="flex-1 overflow-y-auto relative">
+        {sessionSummary && sessionName && (
+          <SessionSummaryBlock summary={sessionSummary} sessionName={sessionName} />
+        )}
         <MessageList messages={messages} />
       </div>
       {!isAtBottom && messages.length > 0 && (
@@ -31,7 +46,13 @@ export function ChatView({ messages, isStreaming, onSend, onStop }: ChatViewProp
           </button>
         </div>
       )}
-      <InputBox onSend={onSend} onStop={onStop} isStreaming={isStreaming} />
+      {isReadOnly ? (
+        <div className="border-t border-zinc-800 px-4 py-3 text-center text-xs text-zinc-600">
+          This session has ended. Start a new session to continue chatting.
+        </div>
+      ) : (
+        <InputBox onSend={onSend} onStop={onStop} isStreaming={isStreaming} />
+      )}
     </div>
   );
 }

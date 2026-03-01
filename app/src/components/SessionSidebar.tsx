@@ -1,48 +1,50 @@
 import { useState, useEffect } from "react";
 import { invokeCommand } from "../lib/tauriBridge";
 import { Plus, MessageSquare, PanelLeftClose, PanelLeft } from "lucide-react";
-import type { Session } from "../lib/types";
+import type { SessionMeta } from "../lib/types";
 
 interface SessionSidebarProps {
   onNewSession: () => void;
-  onLoadSession: (filename: string) => void;
+  onLoadSession: (sessionId: string) => void;
+  activeSessionId: string | null;
   collapsed: boolean;
   onToggle: () => void;
+  refreshKey: number;
 }
 
 export function SessionSidebar({
   onNewSession,
   onLoadSession,
+  activeSessionId,
   collapsed,
   onToggle,
+  refreshKey,
 }: SessionSidebarProps) {
-  const [sessions, setSessions] = useState<Session[]>([]);
+  const [sessions, setSessions] = useState<SessionMeta[]>([]);
 
   useEffect(() => {
     loadSessions();
-  }, []);
+  }, [refreshKey]);
 
   async function loadSessions() {
     try {
-      const files = await invokeCommand<string[]>("list_files", {
-        dir: "sessions",
-        pattern: "*.md",
+      const manifest = await invokeCommand<SessionMeta[]>("list_sessions");
+      setSessions([...manifest].reverse());
+    } catch (err) {
+      console.error("Failed to load sessions:", err);
+    }
+  }
+
+  function formatDate(iso: string): string {
+    try {
+      const d = new Date(iso);
+      return d.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
       });
-      const sessionList: Session[] = files
-        .sort()
-        .reverse()
-        .map((filename) => {
-          const dateMatch = filename.match(/(\d{4}-\d{2}-\d{2})/);
-          return {
-            filename,
-            title: filename.replace(".md", "").replace(/_/g, " "),
-            date: dateMatch ? dateMatch[1] : "",
-            preview: "",
-          };
-        });
-      setSessions(sessionList);
     } catch {
-      // Sessions dir may not exist yet
+      return iso;
     }
   }
 
@@ -95,26 +97,37 @@ export function SessionSidebar({
           </div>
         ) : (
           <div className="py-2">
-            {sessions.map((session) => (
-              <button
-                key={session.filename}
-                onClick={() => onLoadSession(session.filename)}
-                className="flex w-full items-start gap-2 px-4 py-2.5 text-left hover:bg-zinc-900 transition-colors"
-              >
-                <MessageSquare
-                  size={14}
-                  className="mt-0.5 flex-shrink-0 text-zinc-600"
-                />
-                <div className="min-w-0">
-                  <div className="text-xs text-zinc-400 truncate">
-                    {session.date}
+            {sessions.map((session) => {
+              const isActive = session.id === activeSessionId;
+              return (
+                <button
+                  key={session.id}
+                  onClick={() => onLoadSession(session.id)}
+                  className={`flex w-full items-start gap-2 px-4 py-2.5 text-left transition-colors ${
+                    isActive
+                      ? "bg-zinc-800/60 border-l-2 border-blue-500"
+                      : "hover:bg-zinc-900 border-l-2 border-transparent"
+                  }`}
+                >
+                  <MessageSquare
+                    size={14}
+                    className={`mt-0.5 flex-shrink-0 ${
+                      isActive ? "text-blue-400" : "text-zinc-600"
+                    }`}
+                  />
+                  <div className="min-w-0">
+                    <div className={`text-xs truncate ${
+                      isActive ? "text-zinc-200 font-medium" : "text-zinc-400"
+                    }`}>
+                      {session.name}
+                    </div>
+                    <div className="text-xs text-zinc-600 truncate">
+                      {formatDate(session.createdAt)}
+                    </div>
                   </div>
-                  <div className="text-xs text-zinc-500 truncate">
-                    {session.title}
-                  </div>
-                </div>
-              </button>
-            ))}
+                </button>
+              );
+            })}
           </div>
         )}
       </div>
