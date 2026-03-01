@@ -100,6 +100,12 @@ What's conspicuously NOT being discussed:
 - **Use canonical names.** Build the `people` roster first. Pick one name per person and use \
   it everywhere in the output — in episodes, relationships, themes, everywhere. Record any \
   aliases (nicknames, handles, email addresses) in the roster so they can be resolved later.
+- **Keep distinct people separate.** Each roster entry must be one individual. Never list \
+  one person as an alias of another, even if they share context (e.g., housemates, co-workers, \
+  siblings who appear in the same group chats). If two people have similar names or roles, \
+  give each their own roster entry with a distinguishing canonical name. Aliases are for \
+  *the same human* referred to by different names — not for different humans who happen to \
+  co-occur in conversations.
 
 ## Output format
 
