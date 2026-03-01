@@ -8,9 +8,10 @@ interface ChatViewProps {
   messages: Message[];
   isStreaming: boolean;
   onSend: (text: string) => void;
+  onStop: () => void;
 }
 
-export function ChatView({ messages, isStreaming, onSend }: ChatViewProps) {
+export function ChatView({ messages, isStreaming, onSend, onStop }: ChatViewProps) {
   const { containerRef, isAtBottom, scrollToBottom } = useAutoScroll([
     messages,
   ]);
@@ -30,7 +31,7 @@ export function ChatView({ messages, isStreaming, onSend }: ChatViewProps) {
           </button>
         </div>
       )}
-      <InputBox onSend={onSend} disabled={isStreaming} />
+      <InputBox onSend={onSend} onStop={onStop} isStreaming={isStreaming} />
     </div>
   );
 }

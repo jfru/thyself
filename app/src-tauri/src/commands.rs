@@ -3,6 +3,8 @@ use crate::db::{get_data_dir, DbState};
 use crate::tools::{execute_tool, get_tool_definitions};
 use serde_json::{json, Value};
 use std::fs;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 
 #[tauri::command]
@@ -82,6 +84,7 @@ pub async fn run_chat_loop(
     system_prompt: String,
     tools: Vec<Value>,
     stream_id: String,
+    cancel: Option<Arc<AtomicBool>>,
 ) -> Result<Value, String> {
     let api_key = std::env::var("ANTHROPIC_API_KEY")
         .map_err(|_| "ANTHROPIC_API_KEY not set".to_string())?;
@@ -96,6 +99,13 @@ pub async fn run_chat_loop(
     let final_response;
 
     loop {
+        if let Some(ref flag) = cancel {
+            if flag.load(Ordering::Relaxed) {
+                emit_fn(&stream_id, "message_stop", &json!({}));
+                return Err("Cancelled by user".to_string());
+            }
+        }
+
         let response = stream_chat_request(
             emit_fn,
             &api_key,
@@ -198,7 +208,7 @@ pub async fn stream_chat(
         let _ = app.emit(&format!("stream-event-{}", sid), event);
     };
 
-    run_chat_loop(&emit_fn, &state, messages, system_prompt, tools, stream_id).await
+    run_chat_loop(&emit_fn, &state, messages, system_prompt, tools, stream_id, None).await
 }
 
 #[tauri::command]

@@ -15,13 +15,16 @@ use axum::{
 use futures::stream::Stream;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::convert::Infallible;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tower_http::cors::{Any, CorsLayer};
 
 struct AppState {
     db: DbState,
+    active_streams: std::sync::Mutex<HashMap<String, Arc<AtomicBool>>>,
 }
 
 pub async fn start_dev_server() {
@@ -37,6 +40,7 @@ pub async fn start_dev_server() {
         db: DbState {
             conn: std::sync::Mutex::new(db_conn),
         },
+        active_streams: std::sync::Mutex::new(HashMap::new()),
     });
 
     let cors = CorsLayer::new()
@@ -51,6 +55,7 @@ pub async fn start_dev_server() {
         .route("/api/write_file", post(handle_write_file))
         .route("/api/list_files", post(handle_list_files))
         .route("/api/stream_chat", post(handle_stream_chat))
+        .route("/api/stop_chat", post(handle_stop_chat))
         .route("/api/data_dir", get(handle_data_dir))
         .route("/api/tool_defs", get(handle_tool_defs))
         .route("/api/health", get(handle_health))
@@ -200,8 +205,17 @@ async fn handle_stream_chat(
     let (tx, mut rx) = mpsc::unbounded_channel::<StreamEvent>();
 
     let stream_id = body.stream_id.clone();
+    let cancel_flag = Arc::new(AtomicBool::new(false));
 
-    // Spawn the chat loop in a background task
+    state
+        .active_streams
+        .lock()
+        .unwrap()
+        .insert(stream_id.clone(), cancel_flag.clone());
+
+    let state_for_cleanup = state.clone();
+    let cleanup_id = stream_id.clone();
+
     tokio::spawn(async move {
         let tx_for_emit = tx.clone();
         let emit_fn = move |_sid: &str, etype: &str, data: &Value| {
@@ -218,20 +232,29 @@ async fn handle_stream_chat(
             body.system_prompt,
             body.tools.unwrap_or_default(),
             body.stream_id,
+            Some(cancel_flag),
         )
         .await;
 
         if let Err(e) = result {
-            let _ = tx.send(StreamEvent {
-                event_type: "error".to_string(),
-                data: json!({"error": e}),
-            });
+            if e != "Cancelled by user" {
+                let _ = tx.send(StreamEvent {
+                    event_type: "error".to_string(),
+                    data: json!({"error": e}),
+                });
+            }
         }
 
         let _ = tx.send(StreamEvent {
             event_type: "done".to_string(),
             data: json!({}),
         });
+
+        state_for_cleanup
+            .active_streams
+            .lock()
+            .unwrap()
+            .remove(&cleanup_id);
     });
 
     let stream = async_stream::stream! {
@@ -247,4 +270,23 @@ async fn handle_stream_chat(
     };
 
     Sse::new(stream)
+}
+
+#[derive(Deserialize)]
+struct StopChatReq {
+    #[serde(rename = "streamId")]
+    stream_id: String,
+}
+
+async fn handle_stop_chat(
+    AxumState(state): AxumState<Arc<AppState>>,
+    Json(body): Json<StopChatReq>,
+) -> impl IntoResponse {
+    let streams = state.active_streams.lock().unwrap();
+    if let Some(flag) = streams.get(&body.stream_id) {
+        flag.store(true, Ordering::Relaxed);
+        (StatusCode::OK, Json(json!({"status": "stopped"})))
+    } else {
+        (StatusCode::NOT_FOUND, Json(json!({"error": "stream not found"})))
+    }
 }

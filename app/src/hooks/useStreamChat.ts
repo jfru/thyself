@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from "react";
-import { streamChat, type StreamEventPayload } from "../lib/tauriBridge";
+import { streamChat, stopChat, type StreamEventPayload } from "../lib/tauriBridge";
 import type {
   Message,
   AssistantMessage,
@@ -11,10 +11,9 @@ export function useStreamChat() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const unlistenRef = useRef<(() => void) | null>(null);
+  const streamIdRef = useRef<string | null>(null);
   const blocksRef = useRef<ContentBlock[]>([]);
   const toolInputBuffers = useRef<Map<number, string>>(new Map());
-  // Maps Claude's per-round block index → our accumulated blocks array index.
-  // Resets implicitly each round as content_block_start records new mappings.
   const indexMapRef = useRef<Map<number, number>>(new Map());
 
   const sendMessage = useCallback(
@@ -41,6 +40,7 @@ export function useStreamChat() {
       indexMapRef.current.clear();
 
       const streamId = `chat-${Date.now()}`;
+      streamIdRef.current = streamId;
 
       const updateAssistant = (updater: (blocks: ContentBlock[]) => ContentBlock[]) => {
         blocksRef.current = updater(blocksRef.current);
@@ -275,9 +275,50 @@ export function useStreamChat() {
     [messages, isStreaming]
   );
 
+  const stopStreaming = useCallback(() => {
+    if (!isStreaming) return;
+
+    if (streamIdRef.current) {
+      stopChat(streamIdRef.current);
+    }
+
+    if (unlistenRef.current) {
+      unlistenRef.current();
+      unlistenRef.current = null;
+    }
+
+    setMessages((prev) => {
+      const updated = [...prev];
+      const lastIdx = updated.length - 1;
+      if (updated[lastIdx]?.role === "assistant") {
+        const am = updated[lastIdx] as AssistantMessage;
+        updated[lastIdx] = {
+          ...am,
+          isStreaming: false,
+          blocks: am.blocks.map((b) => {
+            if (b.type === "thinking" && b.isStreaming) {
+              return { ...b, isStreaming: false, endTime: Date.now() };
+            }
+            if (b.type === "text" && b.isStreaming) {
+              return { ...b, isStreaming: false };
+            }
+            if (b.type === "tool_use" && b.status === "running") {
+              return { ...b, status: "error" as const, result: "Stopped by user" };
+            }
+            return b;
+          }),
+        } as AssistantMessage;
+      }
+      return updated;
+    });
+
+    setIsStreaming(false);
+    streamIdRef.current = null;
+  }, [isStreaming]);
+
   const clearMessages = useCallback(() => {
     setMessages([]);
   }, []);
 
-  return { messages, isStreaming, sendMessage, clearMessages, setMessages };
+  return { messages, isStreaming, sendMessage, stopStreaming, clearMessages, setMessages };
 }
