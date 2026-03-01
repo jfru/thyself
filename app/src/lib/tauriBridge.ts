@@ -149,3 +149,24 @@ export async function streamChat(
 
   return () => controller.abort();
 }
+
+/**
+ * Signal the backend to stop an active chat stream.
+ * In browser mode, hits the /api/stop_chat endpoint.
+ */
+export async function stopChat(streamId: string): Promise<void> {
+  if (isTauri()) {
+    // TODO: implement Tauri-side cancellation
+    return;
+  }
+
+  try {
+    await fetch(`${DEV_SERVER}/api/stop_chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ streamId }),
+    });
+  } catch {
+    // best-effort
+  }
+}

@@ -1,20 +1,21 @@
 import { useState, useRef, useEffect, KeyboardEvent } from "react";
-import { Send } from "lucide-react";
+import { Send, Square } from "lucide-react";
 
 interface InputBoxProps {
   onSend: (text: string) => void;
-  disabled: boolean;
+  onStop: () => void;
+  isStreaming: boolean;
 }
 
-export function InputBox({ onSend, disabled }: InputBoxProps) {
+export function InputBox({ onSend, onStop, isStreaming }: InputBoxProps) {
   const [text, setText] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    if (!disabled && textareaRef.current) {
+    if (!isStreaming && textareaRef.current) {
       textareaRef.current.focus();
     }
-  }, [disabled]);
+  }, [isStreaming]);
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -25,7 +26,7 @@ export function InputBox({ onSend, disabled }: InputBoxProps) {
 
   const handleSubmit = () => {
     const trimmed = text.trim();
-    if (!trimmed || disabled) return;
+    if (!trimmed || isStreaming) return;
     onSend(trimmed);
     setText("");
     if (textareaRef.current) {
@@ -37,6 +38,10 @@ export function InputBox({ onSend, disabled }: InputBoxProps) {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
       handleSubmit();
+    }
+    if (e.key === "Escape" && isStreaming) {
+      e.preventDefault();
+      onStop();
     }
   };
 
@@ -50,20 +55,30 @@ export function InputBox({ onSend, disabled }: InputBoxProps) {
             onChange={(e) => setText(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Message thyself..."
-            disabled={disabled}
+            disabled={isStreaming}
             rows={1}
             className="flex-1 resize-none bg-transparent text-zinc-100 placeholder-zinc-500 outline-none text-sm leading-relaxed"
           />
-          <button
-            onClick={handleSubmit}
-            disabled={disabled || !text.trim()}
-            className="flex-shrink-0 rounded-lg p-1.5 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-zinc-400 transition-all"
-          >
-            <Send size={18} />
-          </button>
+          {isStreaming ? (
+            <button
+              onClick={onStop}
+              className="flex-shrink-0 rounded-lg p-1.5 text-red-400 hover:text-red-300 hover:bg-zinc-800 transition-all"
+              title="Stop generating (Esc)"
+            >
+              <Square size={18} fill="currentColor" />
+            </button>
+          ) : (
+            <button
+              onClick={handleSubmit}
+              disabled={!text.trim()}
+              className="flex-shrink-0 rounded-lg p-1.5 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-zinc-400 transition-all"
+            >
+              <Send size={18} />
+            </button>
+          )}
         </div>
         <div className="mt-1.5 text-center text-xs text-zinc-600">
-          {"\u2318"}+Enter to send
+          {isStreaming ? "Esc to stop" : "\u2318+Enter to send"}
         </div>
       </div>
     </div>

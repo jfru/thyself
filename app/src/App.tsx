@@ -4,7 +4,7 @@ import { SessionSidebar } from "./components/SessionSidebar";
 import { useStreamChat } from "./hooks/useStreamChat";
 
 function App() {
-  const { messages, isStreaming, sendMessage, clearMessages } = useStreamChat();
+  const { messages, isStreaming, sendMessage, stopStreaming, clearMessages } = useStreamChat();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const handleNewSession = useCallback(() => {
@@ -27,6 +27,7 @@ function App() {
         messages={messages}
         isStreaming={isStreaming}
         onSend={sendMessage}
+        onStop={stopStreaming}
       />
     </div>
   );

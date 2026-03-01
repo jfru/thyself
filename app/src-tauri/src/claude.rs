@@ -66,6 +66,7 @@ pub async fn stream_chat_request(
         "stop_reason": null
     });
     let mut content_blocks: Vec<Value> = Vec::new();
+    let mut tool_input_buffers: Vec<String> = Vec::new();
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| format!("Stream error: {}", e))?;
@@ -102,8 +103,10 @@ pub async fn stream_chat_request(
                     let index = data["index"].as_u64().unwrap_or(0) as usize;
                     while content_blocks.len() <= index {
                         content_blocks.push(Value::Null);
+                        tool_input_buffers.push(String::new());
                     }
                     content_blocks[index] = block.clone();
+                    tool_input_buffers[index] = String::new();
 
                     emit_fn(stream_id, "content_block_start", &json!({
                         "index": index,
@@ -141,6 +144,9 @@ pub async fn stream_chat_request(
                         }
                         Some("input_json_delta") => {
                             let partial = delta["partial_json"].as_str().unwrap_or("");
+                            if index < tool_input_buffers.len() {
+                                tool_input_buffers[index].push_str(partial);
+                            }
                             emit_fn(stream_id, "tool_input_delta", &json!({
                                 "index": index,
                                 "partial_json": partial
@@ -151,6 +157,14 @@ pub async fn stream_chat_request(
                 }
                 "content_block_stop" => {
                     let index = data["index"].as_u64().unwrap_or(0) as usize;
+                    if let Some(block) = content_blocks.get_mut(index) {
+                        if block["type"].as_str() == Some("tool_use") {
+                            let json_str = tool_input_buffers.get(index).map(|s| s.as_str()).unwrap_or("{}");
+                            if let Ok(input) = serde_json::from_str::<Value>(json_str) {
+                                block["input"] = input;
+                            }
+                        }
+                    }
                     emit_fn(stream_id, "content_block_stop", &json!({
                         "index": index,
                         "content_block": content_blocks.get(index).unwrap_or(&Value::Null)
