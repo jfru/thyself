@@ -1,147 +1,166 @@
 ---
-description: You are acting as the user's personal therapist/coach/guru/enlightenment guide. This Cursor project is a personal life intelligence system and it includes a lot of context for you to do your job. Explanations of the project structure and how to best do your job can be found below.
+description: You are building the Thyself Mac app — a Tauri v2 + React desktop application that serves as a personal life intelligence system. This file documents the project architecture, data layer, and testing procedures.
 ---
 
 # thyself — Personal Life Intelligence System
 
-<!-- TODO:CUSTOMIZE — Replace {NAME} with your name throughout this file -->
-<!-- TODO:CUSTOMIZE — Update message counts and date ranges once you've ingested your data -->
+A desktop app (Tauri v2) that gives users an AI therapist/coach powered by their own life data: messages across iMessage, WhatsApp, ChatGPT, and Gmail, with structured life extraction and longitudinal synthesis as context.
 
-{NAME}'s unified life corpus: messages across iMessage, WhatsApp, ChatGPT, and Gmail, with structured life extraction and longitudinal synthesis already run.
+## App Architecture
 
-## Database
-
-The database is at `$THYSELF_DATA_DIR/thyself.db` (SQLite). Read the `THYSELF_DATA_DIR` env var (default: `~/Library/Application Support/Thyself`) to find it. Query with `sqlite3 "$THYSELF_DATA_DIR/thyself.db" "..."` from any directory.
-
-### Raw messages (4 sources)
-
-- `messages` — iMessage/WhatsApp messages. Key columns: `content`, `sent_at`, `is_from_me`, `contact_id`, `source` (imessage|whatsapp), `conversation_id`
-- `chatgpt_messages` — ChatGPT messages. Key columns: `text`, `role` (user|assistant|system), `conversation_id`, `create_time` (unix epoch). Join to `chatgpt_conversations` for title/dates.
-- `gmail_messages` — Emails. Key columns: `body_text`, `subject`, `from_addr`, `from_name`, `to_addrs` (JSON), `sent_at`, `is_from_me`
-
-### People
-
-- `contacts` — contacts with `display_name`, `phone`, `email`, `relationship_type`, `relationship_subtype`
-- `contact_aliases` — phone/email/handle aliases per contact
-- `person_identities` — canonical people resolved from extraction output. Has `canonical_name`, `description`, `first_seen`, `last_seen`, `roles`, `relationship_summary`
-- `person_aliases` — maps extraction name variants → `person_identities`
-- `relationship_metrics` — message counts, response times, engagement scores per contact
-
-### Monthly extraction (Pass 1)
-
-Each month of the corpus was run through Claude Opus. Results in these tables (all have `month_id` FK → `extraction_months`):
-
-- `extraction_months` — monthly summaries. `month` (YYYY-MM), `summary`, `emotional_overall`, `energy_level`, `raw_json`
-- `extraction_episodes` — life events. `name`, `description`, `status` (new|ongoing|escalating|resolving|concluded), `people` (JSON), `emotional_tone`
-- `extraction_relationships` — relationship observations. `person`, `role`, `quality_this_month`, `notable_exchanges` (JSON)
-- `extraction_themes` — recurring themes. `name`, `description`, `intensity` (low|moderate|high|consuming)
-- `extraction_people` — person mentions per month. `canonical_name`, `aliases` (JSON)
-- `extraction_decisions` — decisions/inflection points. `description`, `status` (contemplating|deciding|decided|deferred|avoided)
-- `extraction_tensions` — contradictions within a month
-- `extraction_absences` — conspicuous silences
-- `extraction_observations` — raw observations
-
-### Longitudinal synthesis (Pass 2)
-
-Cross-timeline analysis run over all extraction output. Tables (all have `run_id` FK → `synthesis_runs`):
-
-- `life_chapters` — major life periods with date ranges, defining relationships/themes
-- `relationship_arcs` — key relationship trajectories over time
-- `theme_evolution` — themes tracked across the full timeline
-- `turning_points` — significant inflection moments with month and before/after
-- `recurring_patterns` — behavioral/emotional patterns with instances
-- `synthesis_contradictions` — persistent contradictions across time
-- `person_portrait` — 1 row: `drives`, `fears`, `unnamed_wants`, `character_summary`
-
-### Corrections & epistemic caveats
-
-The `corrections` table records known errors in extraction/synthesis output. **Always query this table before answering questions that rely on extraction or synthesis data** — corrections override what the structured tables say.
-
-```sql
-SELECT correction_type, layer, target, original_claim, corrected_claim, evidence
-FROM corrections ORDER BY created_at;
+```
+app/
+├── src/                          # React frontend (TypeScript + Vite + Tailwind)
+│   ├── components/               # UI components
+│   │   ├── App.tsx               # Root layout (sidebar + chat)
+│   │   ├── ChatView.tsx          # Main chat area
+│   │   ├── MessageList.tsx       # Message list renderer
+│   │   ├── AgentResponse.tsx     # Assistant message (thinking + tools + text)
+│   │   ├── ThinkingBlock.tsx     # Collapsible thinking indicator
+│   │   ├── ToolUseBlock.tsx      # Tool call display with status
+│   │   ├── StreamingText.tsx     # Markdown-rendered text with streaming cursor
+│   │   ├── InputBox.tsx          # Message input with ⌘+Enter
+│   │   ├── SessionSidebar.tsx    # Previous session list
+│   │   ├── UserMessage.tsx       # User message bubble
+│   │   └── CodeBlock.tsx         # Syntax-highlighted code blocks
+│   ├── hooks/
+│   │   ├── useStreamChat.ts      # Core chat state machine + event handling
+│   │   └── useAutoScroll.ts      # Auto-scroll behavior
+│   ├── lib/
+│   │   ├── tauriBridge.ts        # Abstraction over Tauri IPC / HTTP dev server
+│   │   ├── systemPrompt.ts       # Builds the AI system prompt
+│   │   └── types.ts              # TypeScript types for messages, blocks, events
+│   └── styles/globals.css        # Tailwind + global styles
+│
+├── src-tauri/                    # Rust backend
+│   ├── src/
+│   │   ├── lib.rs                # Tauri entry point, env loading, dev server spawn
+│   │   ├── main.rs               # Binary entry
+│   │   ├── commands.rs           # Tauri IPC commands + run_chat_loop
+│   │   ├── claude.rs             # Claude API streaming client
+│   │   ├── tools.rs              # Tool definitions + execution
+│   │   ├── db.rs                 # SQLite connection + query helpers
+│   │   └── dev_server.rs         # Axum HTTP server for browser-based testing
+│   ├── Cargo.toml                # Rust dependencies
+│   └── tauri.conf.json           # Tauri window/app configuration
 ```
 
-Columns: `correction_type` (person_confusion | attribution_error | factual_error | dataset_caveat | framing_error), `layer` (extraction | synthesis), `target` (what's wrong), `original_claim`, `corrected_claim`, `evidence`, `months_affected` (JSON array of YYYY-MM), `status` (pending | applied — tracking only, not programmatic).
+### Key flows
 
-**When {NAME} pushes back, contradicts, or adds context that the dataset doesn't capture, insert a correction:**
+**Chat streaming:** `useStreamChat.ts` → `tauriBridge.ts` → (Tauri IPC or HTTP) → `commands.rs::run_chat_loop` → `claude.rs::stream_chat_request` → Claude API. Events stream back via Tauri events or SSE.
 
-```sql
-INSERT INTO corrections (correction_type, layer, target, original_claim, corrected_claim, evidence, months_affected)
-VALUES (?, ?, ?, ?, ?, ?, ?);
-```
+**Tool use loop:** When Claude responds with `tool_use`, `run_chat_loop` executes the tool via `tools.rs::execute_tool`, emits `tool_result` to the frontend, then calls Claude again with results. This repeats until Claude responds with `end_turn`. The frontend accumulates blocks across rounds using an index map (`indexMapRef` in `useStreamChat.ts`) to translate Claude's per-round indices to the correct positions in the blocks array.
 
-Use `dataset_caveat` when {NAME} provides real-world context the text corpus can't capture (spoken conversations, in-person events, inner states). Use `factual_error` when extraction/synthesis got something wrong. Use `person_confusion` when two people were conflated. Use `framing_error` when the facts are right but the interpretation is wrong. Use `attribution_error` when something is attributed to the wrong source.
+**Backend bridge:** `tauriBridge.ts` detects the runtime environment. In the native Tauri webview (`window.__TAURI_INTERNALS__` exists), it uses `@tauri-apps/api` for IPC. In a regular browser, it routes to `http://localhost:3001/api/*` (the Axum dev server).
 
-**Critical dataset limitation:** The corpus only covers text-based communication (iMessage, WhatsApp, ChatGPT, Gmail). Spoken conversations, in-person interactions, phone/video calls, and inner experience are invisible. Absence from the dataset does not necessarily mean absence from {NAME}'s life.
+## Testing with the Browser Bridge
 
-## Sessions
+The app includes a browser-testable dev mode so agents can test the full UI without needing the native Tauri webview.
 
-`$THYSELF_DATA_DIR/sessions/` contains markdown summaries of previous thyself conversations written by other cursor agents. **Read all session files before engaging with questions about {NAME}'s life** — they contain corrections, context, open questions to resume from, and ground already covered.
+### How it works
 
-At the end of each substantive conversation, **write a new session file** at `$THYSELF_DATA_DIR/sessions/session_YYYY-MM-DD.md` capturing:
-- **Context** — what prompted the conversation
-- **Key exchanges** — important insights, corrections, or revelations (with both the AI's framing and {NAME}'s response where they diverged)
-- **Corrections surfaced** — anything {NAME} pushed back on (also insert these into the `corrections` table)
-- **Open questions** — where the conversation left off, what to resume from
-- **Next steps** — concrete follow-ups identified
+When running `npm run tauri dev` from `app/`, two servers start:
+- **Vite** at `http://localhost:1420` — serves the React frontend
+- **Axum dev server** at `http://localhost:3001` — mirrors all Tauri commands as HTTP endpoints (only in debug builds)
 
-This is the agent's long-term memory across conversations. Without it, each session starts from zero.
+Opening `http://localhost:1420` in a regular browser (including Cursor's built-in browser) activates the HTTP bridge automatically. The frontend detects it's not in Tauri and routes all calls through the Axum server.
 
-## Data files
+### Testing procedure
 
-- `$THYSELF_DATA_DIR/extraction_results/*.json` — extraction JSONs (raw LLM output)
-- `$THYSELF_DATA_DIR/synthesis_results/synthesis_merged.json` — full merged synthesis
-- `$THYSELF_DATA_DIR/synthesis_results/the_person.pdf` — formatted person portrait
+1. **Start the dev environment:**
+   ```bash
+   cd app && npm run tauri dev
+   ```
+   Wait for both Vite (port 1420) and the Axum server (port 3001) to be ready.
 
-## Common query patterns
+2. **Verify servers are up:**
+   ```bash
+   curl -s http://localhost:3001/api/health   # Should return "ok"
+   curl -s http://localhost:1420 | head -1     # Should return HTML
+   ```
 
-```sql
--- Search messages by keyword and date range
-SELECT sent_at, content, source, is_from_me FROM messages
-WHERE content LIKE '%keyword%' AND sent_at BETWEEN '2023-01-01' AND '2023-12-31'
-ORDER BY sent_at;
+3. **Open in browser:** Navigate to `http://localhost:1420`. The sidebar should populate with sessions from `$THYSELF_DATA_DIR/sessions/`.
 
--- Search messages with a specific person
-SELECT m.sent_at, m.content, m.is_from_me FROM messages m
-JOIN contacts c ON m.contact_id = c.id
-WHERE c.display_name LIKE '%Name%' ORDER BY m.sent_at;
+4. **Test chat flow:** Send a message. You should see:
+   - Thinking block (collapsible, shows duration)
+   - Tool use block(s) with spinner → green checkmark on completion
+   - "Processing..." indicator while Claude processes tool results
+   - Streamed text response with markdown rendering
 
--- Get extraction summary for a month
-SELECT summary, emotional_overall, energy_level FROM extraction_months WHERE month = '2024-06';
+5. **Verify with Cursor browser tools:**
+   - `browser_navigate` to `http://localhost:1420`
+   - `browser_lock` before interacting
+   - `browser_snapshot` / `browser_take_screenshot` to inspect state
+   - `browser_fill` + `browser_press_key` (Meta+Enter) to send messages
+   - `browser_console_messages` and `browser_network_requests` to debug
+   - `browser_unlock` when done
 
--- Get all episodes for a month
-SELECT e.name, e.description, e.status, e.emotional_tone
-FROM extraction_episodes e JOIN extraction_months m ON e.month_id = m.id
-WHERE m.month = '2024-06';
+### Dev server API endpoints
 
--- Track a person across months
-SELECT m.month, r.quality_this_month, r.role
-FROM extraction_relationships r JOIN extraction_months m ON r.month_id = m.id
-WHERE r.person LIKE '%Name%' ORDER BY m.month;
+| Endpoint | Method | Mirrors |
+|---|---|---|
+| `/api/health` | GET | Health check |
+| `/api/query_db` | POST | `query_db` command |
+| `/api/write_db` | POST | `write_db` command |
+| `/api/read_file` | POST | `read_file` command |
+| `/api/write_file` | POST | `write_file` command |
+| `/api/list_files` | POST | `list_files` command |
+| `/api/stream_chat` | POST | `stream_chat` command (SSE response) |
+| `/api/data_dir` | GET | `get_data_dir_path` command |
+| `/api/tool_defs` | GET | `get_tool_defs` command |
 
--- Track a theme over time
-SELECT m.month, t.description, t.intensity
-FROM extraction_themes t JOIN extraction_months m ON t.month_id = m.id
-WHERE t.name LIKE '%theme%' ORDER BY m.month;
+### Common issues
 
--- Get life chapters
-SELECT name, start_month, end_month, description FROM life_chapters ORDER BY position;
+- **Port 1420 in use:** `lsof -ti :1420 | xargs kill -9`
+- **Sessions not loading:** Check browser console for CORS errors. The Axum server should allow all origins in debug mode.
+- **Stale frontend:** HMR should auto-reload, but if changes don't appear, reload the browser tab.
 
--- Search ChatGPT conversations
-SELECT c.title, cm.text, datetime(cm.create_time, 'unixepoch') as dt
-FROM chatgpt_messages cm JOIN chatgpt_conversations c ON cm.conversation_id = c.id
-WHERE cm.text LIKE '%keyword%' AND cm.role = 'user' ORDER BY cm.create_time;
+## Database Reference
 
--- Search Gmail
-SELECT subject, from_name, sent_at, substr(body_text, 1, 200)
-FROM gmail_messages WHERE body_text LIKE '%keyword%' ORDER BY sent_at;
-```
+The app reads from `$THYSELF_DATA_DIR/thyself.db` (SQLite). The `THYSELF_DATA_DIR` env var defaults to `~/Library/Application Support/Thyself`. The `.env` file at the project root sets this along with `ANTHROPIC_API_KEY` and `THYSELF_SUBJECT_NAME`.
 
-## Important context
+### Key tables
 
-- {NAME} is the subject. `is_from_me = 1` in messages/gmail. `role = 'user'` in ChatGPT.
-- Many JSON columns (people, sources, evidence, aliases) — use `json_extract()` or treat as text with LIKE.
-- `extraction_months.raw_json` contains the full extraction output for a month if you need fields not in the structured tables.
-- Person names in extraction tables may not exactly match `contacts.display_name` — use `person_identities` + `person_aliases` for resolution, or fuzzy match with LIKE.
-- ChatGPT timestamps are unix epoch floats — use `datetime(create_time, 'unixepoch')`.
+**Raw messages (4 sources):**
+- `messages` — iMessage/WhatsApp. Columns: `content`, `sent_at`, `is_from_me`, `contact_id`, `source`, `conversation_id`
+- `chatgpt_messages` — ChatGPT. Columns: `text`, `role`, `conversation_id`, `create_time` (unix epoch)
+- `gmail_messages` — Email. Columns: `body_text`, `subject`, `from_addr`, `from_name`, `to_addrs` (JSON), `sent_at`, `is_from_me`
+
+**People:**
+- `contacts` — `display_name`, `phone`, `email`, `relationship_type`
+- `person_identities` — canonical people with `canonical_name`, `description`, `relationship_summary`
+- `person_aliases` — name variant → identity mapping
+
+**Monthly extraction (Pass 1):** All have `month_id` FK → `extraction_months`
+- `extraction_months` — monthly summaries with `summary`, `emotional_overall`, `energy_level`
+- `extraction_episodes` — life events with `name`, `description`, `status`, `emotional_tone`
+- `extraction_relationships` — per-person relationship observations
+- `extraction_themes` — recurring themes with `intensity`
+- `extraction_decisions`, `extraction_tensions`, `extraction_absences`, `extraction_observations`
+
+**Longitudinal synthesis (Pass 2):** All have `run_id` FK → `synthesis_runs`
+- `life_chapters`, `relationship_arcs`, `theme_evolution`, `turning_points`, `recurring_patterns`, `synthesis_contradictions`, `person_portrait`
+
+**Corrections:**
+- `corrections` — human-in-the-loop corrections. Types: `person_confusion`, `attribution_error`, `factual_error`, `dataset_caveat`, `framing_error`
+
+### Sessions
+
+`$THYSELF_DATA_DIR/sessions/` contains markdown session summaries. The app reads these via the `read_session_files` tool to give Claude context about previous conversations.
+
+## Tool definitions
+
+The AI in the app has access to these tools (defined in `tools.rs`):
+- `query_database` — run SELECT queries against thyself.db
+- `read_session_files` — read all session markdown files
+- `write_session_file` — save a new session summary
+- `read_file` — read any file from the data directory
+- `list_files` — list files matching a glob pattern
+- `write_correction` — insert a correction into the corrections table
+
+## Environment
+
+Required in `.env` at project root:
+- `ANTHROPIC_API_KEY` — Claude API key
+- `THYSELF_SUBJECT_NAME` — the user's name (used in system prompt)
+- `THYSELF_DATA_DIR` — path to data directory (optional, defaults to `~/Library/Application Support/Thyself`)

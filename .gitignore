@@ -7,3 +7,9 @@ __pycache__/
 *.db-shm
 *.db-wal
 .DS_Store
+
+# Tauri app
+app/node_modules/
+app/dist/
+app/src-tauri/target/
+app/src-tauri/gen/
