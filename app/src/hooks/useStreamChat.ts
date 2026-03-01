@@ -7,7 +7,7 @@ import type {
 } from "../lib/types";
 import { buildSystemPrompt } from "../lib/systemPrompt";
 
-export function useStreamChat() {
+export function useStreamChat(sessionIdRef: React.RefObject<string | null>) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const unlistenRef = useRef<(() => void) | null>(null);
@@ -252,7 +252,7 @@ export function useStreamChat() {
         unlistenRef.current = await streamChat(
           {
             messages: apiMessages,
-            systemPrompt: buildSystemPrompt("Josh"),
+            systemPrompt: buildSystemPrompt("Josh", sessionIdRef.current ?? undefined),
             tools: [],
             streamId,
           },

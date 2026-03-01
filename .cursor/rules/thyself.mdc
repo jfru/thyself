@@ -146,14 +146,18 @@ The app reads from `$THYSELF_DATA_DIR/thyself.db` (SQLite). The `THYSELF_DATA_DI
 
 ### Sessions
 
-`$THYSELF_DATA_DIR/sessions/` contains markdown session summaries. The app reads these via the `read_session_files` tool to give Claude context about previous conversations.
+`$THYSELF_DATA_DIR/sessions/` contains:
+- `sessions.json` — manifest tracking all sessions with metadata (id, name, status, chatHistory)
+- `session_*.md` — markdown session summaries written by the AI
+
+Sessions are created when the user sends their first message (named "Current Session"). When the AI writes a session summary via `write_session_file`, it provides a descriptive title and the session is marked "completed". Clicking a session in the sidebar loads its chat history; completed sessions also show the summary as an expandable block. The backend commands are: `create_session`, `list_sessions`, `load_session`, `save_session_messages`.
 
 ## Tool definitions
 
 The AI in the app has access to these tools (defined in `tools.rs`):
 - `query_database` — run SELECT queries against thyself.db
 - `read_session_files` — read all session markdown files
-- `write_session_file` — save a new session summary
+- `write_session_file` — save a session summary with a descriptive title (no transcript)
 - `read_file` — read any file from the data directory
 - `list_files` — list files matching a glob pattern
 - `write_correction` — insert a correction into the corrections table

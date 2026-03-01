@@ -1,5 +1,6 @@
 use crate::claude::{stream_chat_request, StreamEvent};
 use crate::db::{get_data_dir, DbState};
+use crate::sessions;
 use crate::tools::{execute_tool, get_tool_definitions};
 use serde_json::{json, Value};
 use std::fs;
@@ -73,6 +74,57 @@ pub async fn list_files(dir: String, pattern: Option<String>) -> Result<Vec<Stri
 
     files.sort();
     Ok(files)
+}
+
+#[tauri::command]
+pub async fn create_session() -> Result<Value, String> {
+    let session = sessions::create_session()?;
+    Ok(serde_json::to_value(&session).map_err(|e| e.to_string())?)
+}
+
+#[tauri::command]
+pub async fn list_sessions() -> Result<Value, String> {
+    let manifest = sessions::read_manifest()?;
+    let summary: Vec<Value> = manifest
+        .iter()
+        .map(|s| {
+            json!({
+                "id": s.id,
+                "name": s.name,
+                "createdAt": s.created_at,
+                "status": s.status,
+                "summaryFile": s.summary_file,
+            })
+        })
+        .collect();
+    Ok(json!(summary))
+}
+
+#[tauri::command]
+pub async fn load_session(session_id: String) -> Result<Value, String> {
+    let manifest = sessions::read_manifest()?;
+    let session = manifest
+        .iter()
+        .find(|s| s.id == session_id)
+        .ok_or_else(|| format!("Session not found: {}", session_id))?;
+
+    let summary = if let Some(ref file) = session.summary_file {
+        let path = get_data_dir().join("sessions").join(file);
+        fs::read_to_string(&path).ok()
+    } else {
+        None
+    };
+
+    Ok(json!({
+        "session": session,
+        "summary": summary,
+    }))
+}
+
+#[tauri::command]
+pub async fn save_session_messages(session_id: String, messages: Value) -> Result<Value, String> {
+    sessions::save_messages(&session_id, &messages)?;
+    Ok(json!({"status": "ok"}))
 }
 
 /// Runs the full chat loop (streaming + tool use rounds) with a generic emitter.

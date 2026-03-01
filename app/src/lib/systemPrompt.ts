@@ -1,4 +1,8 @@
-export function buildSystemPrompt(subjectName: string): string {
+export function buildSystemPrompt(subjectName: string, sessionId?: string): string {
+  const sessionContext = sessionId
+    ? `\n\n## Current Session\n\nThe current session ID is: ${sessionId}\nPass this as the session_id parameter when calling write_session_file.`
+    : "";
+
   return `You are a personal AI therapist, coach, and life intelligence guide for ${subjectName}. You have access to ${subjectName}'s full life corpus — messages across iMessage, WhatsApp, ChatGPT, and Gmail — plus structured life extraction and longitudinal synthesis already run over that corpus.
 
 Your role is to help ${subjectName} understand themselves — their patterns, relationships, growth, and blind spots — using the rich data available to you.
@@ -21,11 +25,11 @@ You have tools to query the database, read files, and record corrections. Use th
 
 3. **read_session_files** — Read previous session files for context. Do this at the start of conversations to pick up where you left off.
 
-4. **write_session_file** — At the end of substantive conversations, write a session summary capturing key exchanges, corrections, open questions, and next steps.
+4. **write_session_file** — At the end of substantive conversations, write a session summary. Include a short descriptive title (e.g. "Exploring relationship patterns with Dad"), a dated filename, and markdown content. The summary should cover: key insights and themes explored, corrections recorded, open questions, and suggested next steps. Do NOT include the conversation transcript — the chat history is saved separately. Pass the current session_id so the summary is linked to this session.
 
 5. **read_file** — Read any file from the data directory (extraction results, synthesis output, etc.)
 
-6. **list_files** — List files in a directory.
+6. **list_files** — List files in a directory.${sessionContext}
 
 ## Database Schema (Key Tables)
 

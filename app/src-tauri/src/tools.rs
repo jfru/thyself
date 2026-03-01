@@ -1,4 +1,5 @@
 use crate::db::{get_data_dir, query_rows};
+use crate::sessions;
 use rusqlite::Connection;
 use serde_json::{json, Value};
 use std::fs;
@@ -97,22 +98,35 @@ pub fn execute_tool(
         }
 
         "write_session_file" => {
+            let title = tool_input["title"]
+                .as_str()
+                .ok_or("Missing 'title' parameter")?;
             let filename = tool_input["filename"]
                 .as_str()
                 .ok_or("Missing 'filename' parameter")?;
             let content = tool_input["content"]
                 .as_str()
                 .ok_or("Missing 'content' parameter")?;
+            let session_id = tool_input["session_id"]
+                .as_str()
+                .unwrap_or("");
 
-            let sessions_dir = get_data_dir().join("sessions");
-            fs::create_dir_all(&sessions_dir)
-                .map_err(|e| format!("Failed to create sessions dir: {}", e))?;
+            if session_id.is_empty() {
+                let sessions_dir = get_data_dir().join("sessions");
+                fs::create_dir_all(&sessions_dir)
+                    .map_err(|e| format!("Failed to create sessions dir: {}", e))?;
+                let file_path = sessions_dir.join(filename);
+                fs::write(&file_path, content)
+                    .map_err(|e| format!("Failed to write session file: {}", e))?;
 
-            let file_path = sessions_dir.join(filename);
-            fs::write(&file_path, content)
-                .map_err(|e| format!("Failed to write session file: {}", e))?;
+                sessions::complete_session("", title, filename, content).ok();
 
-            Ok(json!({"status": "ok", "path": file_path.display().to_string()}))
+                Ok(json!({"status": "ok", "path": file_path.display().to_string()}))
+            } else {
+                sessions::complete_session(session_id, title, filename, content)?;
+                let file_path = get_data_dir().join("sessions").join(filename);
+                Ok(json!({"status": "ok", "path": file_path.display().to_string()}))
+            }
         }
 
         "read_file" => {
@@ -235,20 +249,28 @@ pub fn get_tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "write_session_file",
-            "description": "Write a session summary file at the end of a conversation. Captures key exchanges, corrections, open questions, and next steps.",
+            "description": "Write a session summary at the end of a conversation. Provide a short descriptive title, a dated filename, and markdown content summarizing key insights, corrections, open questions, and next steps. Do NOT include the conversation transcript — just the summary.",
             "input_schema": {
                 "type": "object",
                 "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "Short descriptive session title, e.g. 'Exploring relationship patterns with Dad'"
+                    },
                     "filename": {
                         "type": "string",
                         "description": "Filename like session_YYYY-MM-DD.md"
                     },
                     "content": {
                         "type": "string",
-                        "description": "Markdown content for the session file"
+                        "description": "Markdown summary — key insights, corrections recorded, open questions, next steps. Do NOT include the conversation transcript."
+                    },
+                    "session_id": {
+                        "type": "string",
+                        "description": "The active session ID (provided in the system prompt). Pass this to link the summary to the current session."
                     }
                 },
-                "required": ["filename", "content"]
+                "required": ["title", "filename", "content"]
             }
         }),
         json!({
