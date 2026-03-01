@@ -28,36 +28,38 @@ function ToolCallSummary({ tools, isStreaming }: { tools: ToolUseBlockType[]; is
     return <ToolUseBlock block={runningTool} />;
   }
 
+  const totalCount = completedTools.length + (runningTool ? 1 : 0);
+
   return (
     <div className="my-1 space-y-1">
-      {completedTools.length > 0 && (
-        <div>
-          <button
-            onClick={() => setExpanded(!expanded)}
-            className="flex items-center gap-2 text-xs text-zinc-500 hover:text-zinc-300 transition-colors group"
-          >
+      <div>
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="flex items-center gap-2 text-xs text-zinc-500 hover:text-zinc-300 transition-colors group"
+        >
+          {runningTool ? (
+            <Loader2 size={13} className="animate-spin text-zinc-500" />
+          ) : (
             <Wrench size={13} className="text-zinc-500" />
-            <span>
-              {completedTools.length === 1
-                ? "1 tool call"
-                : `${completedTools.length} tool calls`}
-            </span>
-            {expanded ? (
-              <ChevronDown size={12} className="text-zinc-600 group-hover:text-zinc-400" />
-            ) : (
-              <ChevronRight size={12} className="text-zinc-600 group-hover:text-zinc-400" />
-            )}
-          </button>
-          {expanded && (
-            <div className="mt-1 ml-1 space-y-0.5">
-              {completedTools.map((block, i) => (
-                <ToolUseBlock key={block.id || i} block={block} />
-              ))}
-            </div>
           )}
-        </div>
-      )}
-      {runningTool && <ToolUseBlock block={runningTool} />}
+          <span>
+            {totalCount === 1 ? "1 tool call" : `${totalCount} tool calls`}
+          </span>
+          {expanded ? (
+            <ChevronDown size={12} className="text-zinc-600 group-hover:text-zinc-400" />
+          ) : (
+            <ChevronRight size={12} className="text-zinc-600 group-hover:text-zinc-400" />
+          )}
+        </button>
+        {expanded && (
+          <div className="mt-1 ml-1 space-y-0.5">
+            {completedTools.map((block, i) => (
+              <ToolUseBlock key={block.id || i} block={block} />
+            ))}
+            {runningTool && <ToolUseBlock key={runningTool.id || "running"} block={runningTool} />}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

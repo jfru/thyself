@@ -23,7 +23,7 @@ export function MessageList({ messages }: MessageListProps) {
   }
 
   return (
-    <div className="space-y-6 py-6 px-4 max-w-3xl mx-auto">
+    <div className="pb-6">
       {messages.map((msg, i) => {
         if (msg.role === "user") {
           return (
@@ -35,10 +35,11 @@ export function MessageList({ messages }: MessageListProps) {
           );
         }
         return (
-          <AgentResponse
-            key={i}
-            message={msg as AssistantMessage}
-          />
+          <div key={i} className="px-4 py-4 max-w-3xl mx-auto">
+            <AgentResponse
+              message={msg as AssistantMessage}
+            />
+          </div>
         );
       })}
     </div>

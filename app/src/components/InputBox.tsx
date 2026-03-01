@@ -35,7 +35,7 @@ export function InputBox({ onSend, onStop, isStreaming }: InputBoxProps) {
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+    if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();
     }
@@ -48,7 +48,7 @@ export function InputBox({ onSend, onStop, isStreaming }: InputBoxProps) {
   return (
     <div className="border-t border-zinc-800 bg-zinc-950 p-4">
       <div className="mx-auto max-w-3xl">
-        <div className="flex items-end gap-3 rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-3 focus-within:border-zinc-500 transition-colors">
+        <div className="flex items-center gap-3 rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-3 focus-within:border-zinc-500 transition-colors">
           <textarea
             ref={textareaRef}
             value={text}
@@ -78,7 +78,7 @@ export function InputBox({ onSend, onStop, isStreaming }: InputBoxProps) {
           )}
         </div>
         <div className="mt-1.5 text-center text-xs text-zinc-600">
-          {isStreaming ? "Esc to stop" : "\u2318+Enter to send"}
+          {isStreaming ? "Esc to stop" : "Enter to send"}
         </div>
       </div>
     </div>
