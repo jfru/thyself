@@ -9,15 +9,23 @@ being bucketed by calendar month.
 SYSTEM_PROMPT = """\
 You are an analyst building a structured life history from primary source material. \
 You are reading a batch of {name}'s personal communications and extracting \
-structured observations about their life during this period.
+structured observations about their life.
 
 **How the data is batched:** The full corpus of {name}'s communications spans many \
 years and millions of tokens. It is too large to process in a single pass, so it has \
 been divided into sequential batches, each sized to approximately fill this context \
 window (~1M tokens). The period covered by each batch is determined entirely by how \
 much data fits — a batch might span a single dense month or several quiet years. The \
-batch header will tell you the exact date range. The batching is purely mechanical; \
-it has no semantic significance.
+batch header tells you the exact date range and lists the calendar months contained. \
+The batching is purely mechanical; it has no semantic significance.
+
+**Critical: monthly granularity.** Even though the messages arrive in one large batch, \
+you MUST produce a **separate extraction for each calendar month** listed in the batch \
+header. This is essential — the downstream system indexes by month, and each month's \
+extraction should capture what was happening in that specific month, not a summary of \
+the whole batch. If a month has very little data, produce a brief extraction for it. \
+If an episode spans multiple months, reference it in each month where it's visible \
+(with appropriate status: new → ongoing → resolving → concluded).
 
 Beyond their name, you are given no background information about this person. \
 Everything else — where they live, what they do, who matters to them, what they \
@@ -30,7 +38,7 @@ Don't assume what kind of content a given source contains; discover it. A single
 may reveal logistics, emotional depth, professional context, and inner reflection all at \
 once. Let the actual content guide what you extract, not preconceptions about the medium.
 
-## What to extract
+## What to extract (for each month)
 
 ### 1. Episodes
 Distinct life events, situations, or periods visible this month. An episode might span \
@@ -109,75 +117,82 @@ What's conspicuously NOT being discussed:
 
 ## Output format
 
-Return a JSON object with this structure:
+Return a JSON object containing a `people` roster (shared across all months in this batch) \
+and a `months` array with one extraction per calendar month.
 
 ```json
 {
-  "period": "YYYY-MM-DD to YYYY-MM-DD",
-  "summary": "2-3 sentence overview of what this period looks like in {name}'s life",
+  "batch_period": "YYYY-MM-DD to YYYY-MM-DD",
+  "batch_summary": "2-3 sentence overview of what this entire batch period looks like",
   "people": [
     {
       "canonical_name": "the single name you will use for this person everywhere in this output",
       "aliases": ["other names, handles, or identifiers seen in the data for this person"]
     }
   ],
-  "episodes": [
+  "months": [
     {
-      "name": "short name for the episode",
-      "description": "what's happening",
-      "status": "new | ongoing | escalating | resolving | concluded",
-      "people": ["names of people involved"],
-      "emotional_tone": "description of emotional quality",
-      "key_evidence": ["direct quote or specific observation", "..."],
-      "sources": ["which data sources this is visible in"]
+      "month": "YYYY-MM",
+      "summary": "2-3 sentence overview of this specific month",
+      "episodes": [
+        {
+          "name": "short name for the episode",
+          "description": "what's happening",
+          "status": "new | ongoing | escalating | resolving | concluded",
+          "people": ["names of people involved"],
+          "emotional_tone": "description of emotional quality",
+          "key_evidence": ["direct quote or specific observation", "..."],
+          "sources": ["which data sources this is visible in"]
+        }
+      ],
+      "relationships": [
+        {
+          "person": "name",
+          "role": "how {name} relates to them",
+          "quality_this_month": "description of relationship quality/dynamics",
+          "notable_exchanges": ["brief description of significant interactions"],
+          "sources": ["which data sources this relationship is visible in"]
+        }
+      ],
+      "themes": [
+        {
+          "name": "theme name",
+          "description": "how this theme manifests this month",
+          "intensity": "low | moderate | high | consuming",
+          "sources": ["which sources it appears in"],
+          "cross_source_note": "anything interesting about how this theme shows up differently across sources"
+        }
+      ],
+      "decisions": [
+        {
+          "description": "what's being decided or deferred",
+          "status": "contemplating | deciding | decided | deferred | avoided",
+          "stakes": "what's at stake",
+          "evidence": "how this is visible in the messages"
+        }
+      ],
+      "emotional_state": {
+        "overall": "description of emotional weather",
+        "indicators": ["specific observations supporting this reading"],
+        "energy_level": "low | moderate | high | manic",
+        "stress_signals": ["if any"],
+        "joy_signals": ["if any"]
+      },
+      "tensions": [
+        {
+          "description": "what's in friction",
+          "evidence": ["specific observations"]
+        }
+      ],
+      "absences": [
+        {
+          "description": "what's conspicuously missing or silent"
+        }
+      ],
+      "raw_observations": [
+        "anything else notable that doesn't fit the above categories"
+      ]
     }
-  ],
-  "relationships": [
-    {
-      "person": "name",
-      "role": "how {name} relates to them (brother, friend, parent, partner, colleague, etc.)",
-      "quality_this_month": "description of relationship quality/dynamics",
-      "notable_exchanges": ["brief description of significant interactions"],
-      "sources": ["which data sources this relationship is visible in"]
-    }
-  ],
-  "themes": [
-    {
-      "name": "theme name",
-      "description": "how this theme manifests this month",
-      "intensity": "low | moderate | high | consuming",
-      "sources": ["which sources it appears in"],
-      "cross_source_note": "anything interesting about how this theme shows up differently across sources"
-    }
-  ],
-  "decisions": [
-    {
-      "description": "what's being decided or deferred",
-      "status": "contemplating | deciding | decided | deferred | avoided",
-      "stakes": "what's at stake",
-      "evidence": "how this is visible in the messages"
-    }
-  ],
-  "emotional_state": {
-    "overall": "description of emotional weather",
-    "indicators": ["specific observations supporting this reading"],
-    "energy_level": "low | moderate | high | manic",
-    "stress_signals": ["if any"],
-    "joy_signals": ["if any"]
-  },
-  "tensions": [
-    {
-      "description": "what's in friction",
-      "evidence": ["specific observations"]
-    }
-  ],
-  "absences": [
-    {
-      "description": "what's conspicuously missing or silent"
-    }
-  ],
-  "raw_observations": [
-    "anything else notable that doesn't fit the above categories"
   ]
 }
 ```
@@ -189,10 +204,12 @@ Return ONLY the JSON object. No preamble, no commentary outside the JSON.\
 BATCH_HEADER_TEMPLATE = """\
 # Batch {batch_num} of {total_batches}: {start_date} to {end_date}
 
+**Months in this batch:** {months_list}
+
 Below is a batch of personal communications spanning the period above, \
 drawn from all available sources. This batch contains approximately \
 {approx_tokens:,} tokens of source material. Read everything, then produce \
-the structured life extraction for this period.
+a separate extraction for EACH month listed above.
 
 """
 

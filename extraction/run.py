@@ -76,7 +76,7 @@ def _send_to_api(client, system, chunk):
     raw_text = ""
     with client.beta.messages.stream(
         model=MODEL,
-        max_tokens=32768,
+        max_tokens=65536,
         system=system,
         messages=[{"role": "user", "content": chunk}],
         betas=BETA_FLAGS,
@@ -152,15 +152,21 @@ def _auto_resume() -> tuple[int, str | None]:
         if raw.endswith("```"):
             raw = raw[:-3].rstrip()
         data = json.loads(raw)
-        period = data.get("period", "")
-        summary = data.get("summary")
 
-        # Extract the last month covered from the period string
-        # Format: "YYYY-MM-DD to YYYY-MM-DD"
-        last_month = None
-        if " to " in period:
-            end_date = period.split(" to ")[1]
-            last_month = end_date[:7]  # YYYY-MM
+        # Handle both new per-month format and old single-period format
+        if "months" in data and isinstance(data["months"], list) and data["months"]:
+            last_month_data = data["months"][-1]
+            summary = last_month_data.get("summary")
+            last_month = last_month_data.get("month")
+            period = data.get("batch_period", "")
+        else:
+            period = data.get("period", data.get("batch_period", ""))
+            summary = data.get("summary", data.get("batch_summary"))
+            last_month = None
+            if " to " in period:
+                end_date = period.split(" to ")[1]
+                last_month = end_date[:7]
+
         print(f"  Found {len(existing)} existing batches (through {period})")
         return last_num + 1, summary, last_month
     except (json.JSONDecodeError, KeyError, IndexError):
@@ -333,7 +339,10 @@ def run_all(
             result = {"period": f"{batch.start_date} to {batch.end_date}", "_parse_error": str(e), "_raw": raw_text}
 
         results.append(result)
-        prev_summary = result.get("summary")
+        if "months" in result and isinstance(result["months"], list) and result["months"]:
+            prev_summary = result["months"][-1].get("summary")
+        else:
+            prev_summary = result.get("summary") or result.get("batch_summary")
         batch_counter += 1
 
     print(f"\n{'='*60}")
