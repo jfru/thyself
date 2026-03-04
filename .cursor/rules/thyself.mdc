@@ -65,6 +65,17 @@ When running `npm run tauri dev` from `app/`, two servers start:
 
 Opening `http://localhost:1420` in a regular browser (including Cursor's built-in browser) activates the HTTP bridge automatically. The frontend detects it's not in Tauri and routes all calls through the Axum server.
 
+### Critical: Protecting live data
+
+This is a real, actively-used instance of Thyself. The session data, database, and session files are live personal data — not test fixtures.
+
+- **ONE current session.** There should only ever be one "Current Session" at a time. NEVER create a second one. If a current session already exists, use it.
+- **Clear before testing.** Before each test run, clear the existing current session's `chatHistory` to `[]` in `sessions.json`. This gives you a clean slate without creating a new session.
+- **Use test script messages.** Test messages live in `app/test/`. Send these into the current session via the UI to test chat quality against real conversation patterns.
+- **NEVER write a session summary** (`write_session_file`) from a test conversation. The session summaries (`.md` files) are real therapeutic records.
+- **NEVER write test data into the database** (corrections table, etc.).
+- **If you accidentally create a second session**, remove it from `sessions.json` immediately.
+
 ### Testing procedure
 
 1. **Start the dev environment:**
@@ -79,19 +90,21 @@ Opening `http://localhost:1420` in a regular browser (including Cursor's built-i
    curl -s http://localhost:1420 | head -1     # Should return HTML
    ```
 
-3. **Open in browser:** Navigate to `http://localhost:1420`. The sidebar should populate with sessions from `$THYSELF_DATA_DIR/sessions/`.
+3. **Test chat quality (system prompt / agent behavior changes):**
+   - Clear the current session's `chatHistory` to `[]` in `sessions.json`
+   - Navigate to `http://localhost:1420` and click the Current Session
+   - Send test messages from `app/test/` scripts into the UI (use `browser_fill` + `Meta+Enter`)
+   - Inspect the AI's responses — compare against `known_issues` in the test script
+   - After testing, clear the current session's `chatHistory` again
 
-4. **Test chat flow:** Send a message. You should see:
-   - Thinking block (collapsible, shows duration)
-   - Tool use block(s) with spinner → green checkmark on completion
-   - "Processing..." indicator while Claude processes tool results
-   - Streamed text response with markdown rendering
+4. **Test UI (layout, styling, rendering):**
+   Navigate to `http://localhost:1420`. Click existing completed sessions in the sidebar to verify rendering.
 
 5. **Verify with Cursor browser tools:**
    - `browser_navigate` to `http://localhost:1420`
    - `browser_lock` before interacting
    - `browser_snapshot` / `browser_take_screenshot` to inspect state
-   - `browser_fill` + `browser_press_key` (Meta+Enter) to send messages
+   - `browser_fill` + `browser_press_key` (Meta+Enter) to send test messages
    - `browser_console_messages` and `browser_network_requests` to debug
    - `browser_unlock` when done
 
