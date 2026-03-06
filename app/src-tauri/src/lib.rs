@@ -62,6 +62,7 @@ pub fn run() {
             list_sessions,
             load_session,
             save_session_messages,
+            get_sync_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

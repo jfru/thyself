@@ -4,6 +4,8 @@ import type {
   Message,
   AssistantMessage,
   ContentBlock,
+  TextBlock,
+  WebSearchResult,
 } from "../lib/types";
 import { buildSystemPrompt } from "../lib/systemPrompt";
 
@@ -92,11 +94,12 @@ export function useStreamChat(sessionIdRef: React.RefObject<string | null>) {
                 },
               ]);
             } else if (block.type === "text") {
+              const citations = (data.content_block as Record<string, unknown>)?.citations as TextBlock["citations"] | undefined;
               updateAssistant((blocks) => [
                 ...blocks,
-                { type: "text", text: "", isStreaming: true },
+                { type: "text", text: "", isStreaming: true, ...(citations ? { citations } : {}) },
               ]);
-            } else if (block.type === "tool_use") {
+            } else if (block.type === "tool_use" || block.type === "server_tool_use") {
               updateAssistant((blocks) => [
                 ...blocks,
                 {
@@ -109,6 +112,18 @@ export function useStreamChat(sessionIdRef: React.RefObject<string | null>) {
                 },
               ]);
               toolInputBuffers.current.set(targetIdx, "");
+            } else if (block.type === "web_search_tool_result") {
+              const toolUseId = (data.content_block as Record<string, unknown>)?.tool_use_id as string;
+              const searchContent = (data.content_block as Record<string, unknown>)?.content as WebSearchResult[] | undefined;
+              if (toolUseId) {
+                updateAssistant((blocks) =>
+                  blocks.map((b) =>
+                    b.type === "tool_use" && b.id === toolUseId
+                      ? { ...b, status: "complete" as const, searchResults: searchContent || [] }
+                      : b
+                  ) as ContentBlock[]
+                );
+              }
             }
             break;
           }
@@ -163,7 +178,9 @@ export function useStreamChat(sessionIdRef: React.RefObject<string | null>) {
                   };
                 }
                 if (b.type === "text") {
-                  return { ...b, isStreaming: false };
+                  const blockData = data.content_block as Record<string, unknown> | undefined;
+                  const citations = blockData?.citations as TextBlock["citations"] | undefined;
+                  return { ...b, isStreaming: false, ...(citations ? { citations } : {}) };
                 }
                 if (b.type === "tool_use") {
                   const jsonStr = toolInputBuffers.current.get(idx) || "{}";

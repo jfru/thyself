@@ -181,7 +181,7 @@ pub fn get_tool_definitions() -> Vec<Value> {
     vec![
         json!({
             "name": "query_database",
-            "description": "Run a read-only SQL query against the thyself.db SQLite database. Returns rows as JSON. Use this to explore the user's life data — messages, extraction results, synthesis, relationships, themes, and more. Supports SELECT and WITH queries only.",
+            "description": "Run a read-only SQL query against the thyself.db SQLite database. Returns rows as JSON. Use this to explore the user's life data and to verify claims about their history or patterns before stating them. Always check the corrections table when referencing extraction or synthesis data. Supports SELECT and WITH queries only.",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -200,7 +200,7 @@ pub fn get_tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "write_correction",
-            "description": "Record a correction when the user pushes back on something the data says. Types: person_confusion, attribution_error, factual_error, dataset_caveat, framing_error.",
+            "description": "Record a correction when the user pushes back or provides context the data doesn't capture. Don't just pivot to a new interpretation — record what was wrong and why. Types: person_confusion, attribution_error, factual_error, dataset_caveat, framing_error.",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -240,7 +240,7 @@ pub fn get_tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "read_session_files",
-            "description": "Read previous session markdown files for context. Returns all session files from the sessions directory. Call this at the start of every conversation to load context from prior sessions.",
+            "description": "Read previous session markdown files for context. Use this to check prior session context before making claims about previous conversations or established patterns. Call this at the start of every conversation and again mid-conversation when referencing prior sessions.",
             "input_schema": {
                 "type": "object",
                 "properties": {},

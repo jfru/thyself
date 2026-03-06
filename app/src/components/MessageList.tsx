@@ -1,4 +1,4 @@
-import type { Message, AssistantMessage } from "../lib/types";
+import type { Message, UserMessage as UserMessageType, AssistantMessage } from "../lib/types";
 import { UserMessage } from "./UserMessage";
 import { AgentResponse } from "./AgentResponse";
 
@@ -9,7 +9,7 @@ interface MessageListProps {
 export function MessageList({ messages }: MessageListProps) {
   if (messages.length === 0) {
     return (
-      <div className="flex flex-1 items-center justify-center">
+      <div className="flex flex-1 items-center justify-center pt-32">
         <div className="text-center space-y-3 max-w-md">
           <div className="text-4xl">🪞</div>
           <h2 className="text-xl font-medium text-zinc-200">thyself</h2>
@@ -22,7 +22,7 @@ export function MessageList({ messages }: MessageListProps) {
     );
   }
 
-  const turns: { user: Message; responses: AssistantMessage[] }[] = [];
+  const turns: { user: UserMessageType; responses: AssistantMessage[] }[] = [];
   for (const msg of messages) {
     if (msg.role === "user") {
       turns.push({ user: msg, responses: [] });
@@ -32,7 +32,7 @@ export function MessageList({ messages }: MessageListProps) {
   }
 
   return (
-    <div className="pb-6">
+    <div className="pt-4 pb-6">
       {turns.map((turn, i) => (
         <div key={i}>
           <UserMessage

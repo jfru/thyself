@@ -141,14 +141,22 @@ pub async fn run_chat_loop(
     let api_key = std::env::var("ANTHROPIC_API_KEY")
         .map_err(|_| "ANTHROPIC_API_KEY not set".to_string())?;
 
-    let tool_defs = if tools.is_empty() {
+    let mut tool_defs = if tools.is_empty() {
         get_tool_definitions()
     } else {
         tools
     };
 
+    tool_defs.push(json!({
+        "type": "web_search_20250305",
+        "name": "web_search",
+        "max_uses": 5
+    }));
+
     let mut conversation = messages;
     let final_response;
+
+    const EPISTEMIC_REMINDER: &str = "\n\n[Reminder: Present interpretations as hypotheses, not conclusions. Verify historical claims against data. Ask before narrating the user's experience. Distinguish therapeutic frameworks from established fact.]";
 
     loop {
         if let Some(ref flag) = cancel {
@@ -170,6 +178,20 @@ pub async fn run_chat_loop(
 
         let stop_reason = response["stop_reason"].as_str().unwrap_or("end_turn");
 
+        if stop_reason == "pause_turn" {
+            let content = response["content"].as_array().cloned().unwrap_or_default();
+            let content_without_thinking: Vec<Value> = content
+                .iter()
+                .filter(|block| block["type"].as_str() != Some("thinking"))
+                .cloned()
+                .collect();
+            conversation.push(json!({
+                "role": "assistant",
+                "content": content_without_thinking
+            }));
+            continue;
+        }
+
         if stop_reason == "tool_use" {
             let content = response["content"].as_array().cloned().unwrap_or_default();
 
@@ -186,7 +208,8 @@ pub async fn run_chat_loop(
 
             let mut tool_results: Vec<Value> = Vec::new();
             for block in &content {
-                if block["type"].as_str() == Some("tool_use") {
+                let block_type = block["type"].as_str().unwrap_or("");
+                if block_type == "tool_use" {
                     let tool_name = block["name"].as_str().unwrap_or("");
                     let tool_id = block["id"].as_str().unwrap_or("");
                     let tool_input = &block["input"];
@@ -204,9 +227,9 @@ pub async fn run_chat_loop(
                             } else {
                                 text
                             };
-                            (truncated, false)
+                            (format!("{}{}", truncated, EPISTEMIC_REMINDER), false)
                         }
-                        Err(e) => (e, true),
+                        Err(e) => (format!("{}{}", e, EPISTEMIC_REMINDER), true),
                     };
 
                     emit_fn(
@@ -229,10 +252,12 @@ pub async fn run_chat_loop(
                 }
             }
 
-            conversation.push(json!({
-                "role": "user",
-                "content": tool_results
-            }));
+            if !tool_results.is_empty() {
+                conversation.push(json!({
+                    "role": "user",
+                    "content": tool_results
+                }));
+            }
         } else {
             final_response = response;
             break;
@@ -271,4 +296,90 @@ pub async fn get_data_dir_path() -> Result<String, String> {
 #[tauri::command]
 pub async fn get_tool_defs() -> Result<Vec<Value>, String> {
     Ok(get_tool_definitions())
+}
+
+#[tauri::command]
+pub async fn get_sync_status(state: State<'_, DbState>) -> Result<Value, String> {
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+
+    let table_exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sync_runs'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|c| c > 0)
+        .unwrap_or(false);
+
+    if !table_exists {
+        return Ok(json!({
+            "latest_by_source": {},
+            "history": [],
+            "has_sync_runs": false
+        }));
+    }
+
+    let mut latest_stmt = conn
+        .prepare(
+            "SELECT source, started_at, finished_at, messages_added, status, error_message, last_message_at
+             FROM sync_runs
+             WHERE id IN (SELECT MAX(id) FROM sync_runs GROUP BY source)
+             ORDER BY source",
+        )
+        .map_err(|e| format!("SQL error: {}", e))?;
+
+    let latest_rows: Vec<Value> = latest_stmt
+        .query_map([], |row| {
+            Ok(json!({
+                "source": row.get::<_, String>(0)?,
+                "started_at": row.get::<_, Option<String>>(1)?,
+                "finished_at": row.get::<_, Option<String>>(2)?,
+                "messages_added": row.get::<_, i64>(3)?,
+                "status": row.get::<_, String>(4)?,
+                "error_message": row.get::<_, Option<String>>(5)?,
+                "last_message_at": row.get::<_, Option<String>>(6)?,
+            }))
+        })
+        .map_err(|e| format!("Query error: {}", e))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    let mut latest_map = serde_json::Map::new();
+    for row in &latest_rows {
+        if let Some(source) = row["source"].as_str() {
+            latest_map.insert(source.to_string(), row.clone());
+        }
+    }
+
+    let mut history_stmt = conn
+        .prepare(
+            "SELECT id, source, started_at, finished_at, messages_added, status, error_message, last_message_at
+             FROM sync_runs
+             ORDER BY id DESC
+             LIMIT 100",
+        )
+        .map_err(|e| format!("SQL error: {}", e))?;
+
+    let history: Vec<Value> = history_stmt
+        .query_map([], |row| {
+            Ok(json!({
+                "id": row.get::<_, i64>(0)?,
+                "source": row.get::<_, String>(1)?,
+                "started_at": row.get::<_, Option<String>>(2)?,
+                "finished_at": row.get::<_, Option<String>>(3)?,
+                "messages_added": row.get::<_, i64>(4)?,
+                "status": row.get::<_, String>(5)?,
+                "error_message": row.get::<_, Option<String>>(6)?,
+                "last_message_at": row.get::<_, Option<String>>(7)?,
+            }))
+        })
+        .map_err(|e| format!("Query error: {}", e))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(json!({
+        "latest_by_source": Value::Object(latest_map),
+        "history": history,
+        "has_sync_runs": true
+    }))
 }
