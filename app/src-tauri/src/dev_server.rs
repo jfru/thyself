@@ -63,6 +63,7 @@ pub async fn start_dev_server() {
         .route("/api/save_session_messages", post(handle_save_session_messages))
         .route("/api/data_dir", get(handle_data_dir))
         .route("/api/tool_defs", get(handle_tool_defs))
+        .route("/api/sync_status", get(handle_sync_status))
         .route("/api/health", get(handle_health))
         .layer(cors)
         .with_state(state);
@@ -376,4 +377,83 @@ async fn handle_save_session_messages(
         Ok(_) => (StatusCode::OK, Json(json!({"status": "ok"}))),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e}))),
     }
+}
+
+async fn handle_sync_status(
+    AxumState(state): AxumState<Arc<AppState>>,
+) -> impl IntoResponse {
+    let conn = state.db.conn.lock().unwrap();
+
+    let table_exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sync_runs'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|c| c > 0)
+        .unwrap_or(false);
+
+    if !table_exists {
+        return Json(json!({
+            "latest_by_source": {},
+            "history": [],
+            "has_sync_runs": false
+        }));
+    }
+
+    let latest: Vec<Value> = conn
+        .prepare(
+            "SELECT source, started_at, finished_at, messages_added, status, error_message, last_message_at
+             FROM sync_runs WHERE id IN (SELECT MAX(id) FROM sync_runs GROUP BY source) ORDER BY source",
+        )
+        .and_then(|mut stmt| {
+            let rows = stmt.query_map([], |row| {
+                Ok(json!({
+                    "source": row.get::<_, String>(0)?,
+                    "started_at": row.get::<_, Option<String>>(1)?,
+                    "finished_at": row.get::<_, Option<String>>(2)?,
+                    "messages_added": row.get::<_, i64>(3)?,
+                    "status": row.get::<_, String>(4)?,
+                    "error_message": row.get::<_, Option<String>>(5)?,
+                    "last_message_at": row.get::<_, Option<String>>(6)?,
+                }))
+            })?;
+            Ok(rows.filter_map(|r| r.ok()).collect())
+        })
+        .unwrap_or_default();
+
+    let mut latest_map = serde_json::Map::new();
+    for row in &latest {
+        if let Some(source) = row["source"].as_str() {
+            latest_map.insert(source.to_string(), row.clone());
+        }
+    }
+
+    let history: Vec<Value> = conn
+        .prepare(
+            "SELECT id, source, started_at, finished_at, messages_added, status, error_message, last_message_at
+             FROM sync_runs ORDER BY id DESC LIMIT 100",
+        )
+        .and_then(|mut stmt| {
+            let rows = stmt.query_map([], |row| {
+                Ok(json!({
+                    "id": row.get::<_, i64>(0)?,
+                    "source": row.get::<_, String>(1)?,
+                    "started_at": row.get::<_, Option<String>>(2)?,
+                    "finished_at": row.get::<_, Option<String>>(3)?,
+                    "messages_added": row.get::<_, i64>(4)?,
+                    "status": row.get::<_, String>(5)?,
+                    "error_message": row.get::<_, Option<String>>(6)?,
+                    "last_message_at": row.get::<_, Option<String>>(7)?,
+                }))
+            })?;
+            Ok(rows.filter_map(|r| r.ok()).collect())
+        })
+        .unwrap_or_default();
+
+    Json(json!({
+        "latest_by_source": Value::Object(latest_map),
+        "history": history,
+        "has_sync_runs": true
+    }))
 }

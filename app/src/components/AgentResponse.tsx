@@ -18,7 +18,7 @@ interface AgentResponseProps {
   message: AssistantMessage;
 }
 
-function ToolCallSummary({ tools, isStreaming }: { tools: ToolUseBlockType[]; isStreaming: boolean }) {
+function ToolCallSummary({ tools, isStreaming: _isStreaming }: { tools: ToolUseBlockType[]; isStreaming: boolean }) {
   const [expanded, setExpanded] = useState(false);
 
   const runningTool = tools.find((t) => t.status === "running");

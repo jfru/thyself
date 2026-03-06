@@ -75,6 +75,13 @@ function App() {
     setIsReadOnly(false);
   }, [clearMessages]);
 
+  const handleClearSession = useCallback(async () => {
+    clearMessages();
+    if (activeSessionId) {
+      await saveCurrentMessages(activeSessionId, []);
+    }
+  }, [clearMessages, activeSessionId, saveCurrentMessages]);
+
   const handleLoadSession = useCallback(
     async (sessionId: string) => {
       try {
@@ -124,6 +131,7 @@ function App() {
         isStreaming={isStreaming}
         onSend={handleSend}
         onStop={stopStreaming}
+        onClear={!isReadOnly ? handleClearSession : undefined}
         sessionSummary={sessionSummary}
         sessionName={sessionName}
         isReadOnly={isReadOnly}
