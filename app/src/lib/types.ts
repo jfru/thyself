@@ -6,10 +6,27 @@ export interface ThinkingBlock {
   endTime?: number;
 }
 
+export interface Citation {
+  type: "web_search_result_location";
+  url: string;
+  title: string;
+  cited_text: string;
+  encrypted_index?: string;
+}
+
 export interface TextBlock {
   type: "text";
   text: string;
   isStreaming: boolean;
+  citations?: Citation[];
+}
+
+export interface WebSearchResult {
+  type: "web_search_result";
+  url: string;
+  title: string;
+  page_age?: string;
+  encrypted_content?: string;
 }
 
 export interface ToolUseBlock {
@@ -21,6 +38,7 @@ export interface ToolUseBlock {
   status: "running" | "complete" | "error";
   result?: string;
   isError?: boolean;
+  searchResults?: WebSearchResult[];
 }
 
 export type ContentBlock = ThinkingBlock | TextBlock | ToolUseBlock;
@@ -76,4 +94,21 @@ export interface Session {
   title: string;
   date: string;
   preview: string;
+}
+
+export interface SyncRun {
+  id?: number;
+  source: string;
+  started_at: string | null;
+  finished_at: string | null;
+  messages_added: number;
+  status: string;
+  error_message: string | null;
+  last_message_at: string | null;
+}
+
+export interface SyncStatus {
+  latest_by_source: Record<string, SyncRun>;
+  history: SyncRun[];
+  has_sync_runs: boolean;
 }

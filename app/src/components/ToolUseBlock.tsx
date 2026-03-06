@@ -3,6 +3,7 @@ import {
   Database,
   FileText,
   FolderOpen,
+  Globe,
   PenLine,
   ChevronDown,
   ChevronRight,
@@ -21,6 +22,7 @@ const TOOL_ICONS: Record<string, typeof Database> = {
   write_session_file: FileText,
   read_file: FileText,
   list_files: FolderOpen,
+  web_search: Globe,
 };
 
 function getToolDescription(block: ToolUseBlockType): string {
@@ -41,6 +43,8 @@ function getToolDescription(block: ToolUseBlockType): string {
       return `Reading ${(input.path as string) || "file"}`;
     case "list_files":
       return `Listing ${(input.directory as string) || "files"}`;
+    case "web_search":
+      return `Searching: ${(input.query as string) || "web"}`;
     default:
       return block.name;
   }
@@ -74,7 +78,7 @@ export function ToolUseBlock({ block }: ToolUseBlockProps) {
       </button>
       {expanded && (
         <div className="border-t border-zinc-800 px-3 py-2 space-y-2">
-          {block.name === "query_database" && block.input.sql && (
+          {block.name === "query_database" && typeof block.input.sql === "string" && (
             <div>
               <div className="text-[10px] uppercase tracking-wider text-zinc-600 mb-1">
                 Query
@@ -82,6 +86,27 @@ export function ToolUseBlock({ block }: ToolUseBlockProps) {
               <pre className="text-xs text-blue-300 bg-zinc-950 rounded p-2 overflow-x-auto whitespace-pre-wrap font-mono">
                 {block.input.sql as string}
               </pre>
+            </div>
+          )}
+          {block.name === "web_search" && block.searchResults && block.searchResults.length > 0 && (
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-zinc-600 mb-1">
+                Results
+              </div>
+              <div className="space-y-1.5">
+                {block.searchResults.map((r, i) => (
+                  <a
+                    key={i}
+                    href={r.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block text-xs bg-zinc-950 rounded p-2 hover:bg-zinc-900 transition-colors"
+                  >
+                    <div className="text-blue-400 font-medium truncate">{r.title}</div>
+                    <div className="text-zinc-500 truncate text-[11px]">{r.url}</div>
+                  </a>
+                ))}
+              </div>
             </div>
           )}
           {block.result && (

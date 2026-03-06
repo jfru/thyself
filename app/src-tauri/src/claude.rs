@@ -158,7 +158,8 @@ pub async fn stream_chat_request(
                 "content_block_stop" => {
                     let index = data["index"].as_u64().unwrap_or(0) as usize;
                     if let Some(block) = content_blocks.get_mut(index) {
-                        if block["type"].as_str() == Some("tool_use") {
+                        let block_type = block["type"].as_str().unwrap_or("");
+                        if block_type == "tool_use" || block_type == "server_tool_use" {
                             let json_str = tool_input_buffers.get(index).map(|s| s.as_str()).unwrap_or("{}");
                             if let Ok(input) = serde_json::from_str::<Value>(json_str) {
                                 block["input"] = input;
