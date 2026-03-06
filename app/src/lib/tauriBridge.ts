@@ -19,12 +19,14 @@ export async function invokeCommand<T = unknown>(
 
   const getCommands = new Set([
     "data_dir", "tool_defs", "get_data_dir_path", "get_tool_defs", "list_sessions",
+    "get_sync_status", "sync_status",
   ]);
   const method = getCommands.has(cmd) ? "GET" : "POST";
 
   const endpointMap: Record<string, string> = {
     get_data_dir_path: "data_dir",
     get_tool_defs: "tool_defs",
+    get_sync_status: "sync_status",
   };
   const endpoint = endpointMap[cmd] || cmd;
 
