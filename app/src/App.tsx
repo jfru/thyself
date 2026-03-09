@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { ChatView } from "./components/ChatView";
 import { SessionSidebar } from "./components/SessionSidebar";
 import { useStreamChat } from "./hooks/useStreamChat";
@@ -19,6 +19,24 @@ function App() {
   const refreshSidebar = useCallback(() => {
     setSidebarRefreshKey((k) => k + 1);
   }, []);
+
+  useEffect(() => {
+    async function resumeActiveSession() {
+      try {
+        const manifest = await invokeCommand<SessionMeta[]>("list_sessions");
+        const active = manifest.find((s) => s.status === "active");
+        if (!active) return;
+        setActiveSessionId(active.id);
+        sessionIdRef.current = active.id;
+        if (Array.isArray(active.chatHistory) && active.chatHistory.length > 0) {
+          setMessages(active.chatHistory);
+        }
+      } catch (err) {
+        console.error("Failed to resume active session:", err);
+      }
+    }
+    resumeActiveSession();
+  }, [setMessages]);
 
   const saveCurrentMessages = useCallback(
     async (sessionId: string, msgs: Message[]) => {
