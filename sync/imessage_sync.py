@@ -104,7 +104,17 @@ def sync(thyself_db_path=None):
     thyself = sqlite3.connect(db_path)
     thyself.execute("PRAGMA journal_mode=WAL")
 
-    imsg = sqlite3.connect(f"file:{IMESSAGE_DB}?mode=ro", uri=True)
+    try:
+        imsg = sqlite3.connect(f"file:{IMESSAGE_DB}?mode=ro", uri=True)
+        imsg.execute("SELECT count(*) FROM message LIMIT 1")
+    except sqlite3.DatabaseError as e:
+        if "authorization" in str(e).lower():
+            python_bin = sys.executable
+            raise PermissionError(
+                f"Full Disk Access required. Grant FDA to: {python_bin}\n"
+                "System Settings → Privacy & Security → Full Disk Access → add the Python binary"
+            ) from e
+        raise
 
     contact_map = load_contact_map(thyself)
     conv_map = load_conversation_map(thyself)

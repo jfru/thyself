@@ -34,9 +34,5 @@
         <key>PATH</key>
         <string>/Users/jfru/.pyenv/shims:/usr/local/bin:/usr/bin:/bin</string>
     </dict>
-
-    <!-- Run missed jobs when waking from sleep -->
-    <key>StartInterval</key>
-    <integer>604800</integer>
 </dict>
 </plist>

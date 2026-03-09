@@ -142,6 +142,17 @@ def extract_messages_from_safari(cutoff_ts):
     if data.get("status") == "error":
         raise RuntimeError(f"WhatsApp Web extraction error: {data.get('error')}")
 
+    import logging
+    log = logging.getLogger("thyself.sync")
+    log.info(
+        f"  WhatsApp Web JS result: {data.get('count')} messages from "
+        f"{data.get('totalChats', '?')} chats ({data.get('chatsWithMsgs', '?')} with msgs), "
+        f"scanned {data.get('totalMsgsScanned', '?')}, "
+        f"filtered: time={data.get('filteredByTime', '?')} type={data.get('filteredByType', '?')} "
+        f"body={data.get('filteredByBody', '?')}, "
+        f"loadErrors={data.get('loadErrors', '?')}, cutoff={data.get('cutoffUsed', '?')}"
+    )
+
     total = data.get("count", 0)
     if total == 0:
         return []
@@ -180,23 +191,49 @@ def get_last_synced_timestamp(thyself_conn):
         return 0
     try:
         dt = datetime.fromisoformat(row[0])
-        return int(dt.timestamp())
+        import calendar
+        return calendar.timegm(dt.timetuple())
     except (ValueError, TypeError):
         return 0
 
 
-def sync(thyself_db_path=None):
-    """Run WhatsApp Web sync via Safari. Returns (messages_added, last_message_at)."""
+def sync(thyself_db_path=None, max_retries=2, retry_delay=120):
+    """Run WhatsApp Web sync via Safari. Returns (messages_added, last_message_at).
+
+    Retries automatically if 0 messages are found, to handle cases where
+    WhatsApp Web is still reconnecting after laptop wake from sleep.
+    """
+    import logging
+    log = logging.getLogger("thyself.sync")
+
     db_path = str(thyself_db_path or DB_PATH)
 
     thyself = sqlite3.connect(db_path)
     thyself.execute("PRAGMA journal_mode=WAL")
 
     last_ts = get_last_synced_timestamp(thyself)
-    # Overlap by 1 hour
     cutoff_ts = max(0, last_ts - 3600)
 
-    messages = extract_messages_from_safari(cutoff_ts)
+    messages = None
+    for attempt in range(max_retries + 1):
+        try:
+            messages = extract_messages_from_safari(cutoff_ts)
+        except RuntimeError as e:
+            if attempt < max_retries:
+                log.warning(f"  WhatsApp Web attempt {attempt + 1} error: {e}")
+                log.info(f"  Retrying in {retry_delay}s...")
+                time.sleep(retry_delay)
+                continue
+            raise
+
+        if messages or attempt == max_retries:
+            break
+
+        log.info(
+            f"  WhatsApp Web: 0 messages on attempt {attempt + 1}/{max_retries + 1}, "
+            f"retrying in {retry_delay}s (session may still be reconnecting)..."
+        )
+        time.sleep(retry_delay)
 
     if not messages:
         thyself.close()
