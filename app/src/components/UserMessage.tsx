@@ -27,7 +27,7 @@ export function UserMessage({ content, timestamp }: UserMessageProps) {
   const isCollapsed = needsTruncation && !expanded;
 
   return (
-    <div className="sticky top-8 z-10 bg-zinc-950 px-4 pt-4 pb-2">
+    <div className="sticky top-0 z-10 bg-zinc-950 px-4 pt-4 pb-2">
       <div
         ref={cardRef}
         className={`group relative max-w-3xl mx-auto rounded-xl border border-zinc-800 bg-zinc-900/60 px-4 pt-3 pb-4 overflow-hidden ${needsTruncation ? "cursor-pointer" : ""}`}
