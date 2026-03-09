@@ -11,14 +11,20 @@ export function UpdateNotification() {
 
   const checkAndInstall = useCallback(async () => {
     try {
+      console.log("[updater] checking for updates…");
       const update = await check();
-      if (!update) return;
+      if (!update) {
+        console.log("[updater] no update available");
+        return;
+      }
 
+      console.log(`[updater] update found: v${update.version}, downloading…`);
       setVersion(update.version);
       await update.downloadAndInstall();
+      console.log("[updater] update installed, ready to restart");
       setReady(true);
-    } catch {
-      // Silently ignore — network issues, no releases yet, etc.
+    } catch (err) {
+      console.error("[updater] error:", err);
     }
   }, []);
 
