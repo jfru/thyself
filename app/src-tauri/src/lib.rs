@@ -8,6 +8,7 @@ mod tools;
 use commands::*;
 
 fn load_env() {
+    // Check CWD and ancestors (works for dev builds run from the project)
     if let Ok(cwd) = std::env::current_dir() {
         for dir in [
             Some(cwd.clone()),
@@ -25,6 +26,18 @@ fn load_env() {
             }
         }
     }
+
+    // For production bundles: check the app data directory
+    if let Some(home) = dirs::home_dir() {
+        let data_env = home
+            .join("Library/Application Support/Thyself")
+            .join(".env");
+        if data_env.exists() {
+            dotenv::from_path(&data_env).ok();
+            return;
+        }
+    }
+
     dotenv::dotenv().ok();
 }
 
