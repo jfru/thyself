@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { ChatView } from "./components/ChatView";
 import { SessionSidebar } from "./components/SessionSidebar";
+import { UpdateNotification } from "./components/UpdateNotification";
 import { useStreamChat } from "./hooks/useStreamChat";
 import { invokeCommand } from "./lib/tauriBridge";
 import type { SessionMeta, Message } from "./lib/types";
@@ -135,7 +136,9 @@ function App() {
   );
 
   return (
-    <div className="flex h-screen bg-zinc-950 text-zinc-100">
+    <div className="flex flex-col h-screen bg-zinc-950 text-zinc-100">
+      <UpdateNotification />
+      <div className="flex flex-1 min-h-0">
       <SessionSidebar
         onNewSession={handleNewSession}
         onLoadSession={handleLoadSession}
@@ -154,6 +157,7 @@ function App() {
         sessionName={sessionName}
         isReadOnly={isReadOnly}
       />
+      </div>
     </div>
   );
 }
