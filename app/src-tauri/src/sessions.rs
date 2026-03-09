@@ -43,7 +43,11 @@ fn write_manifest(sessions: &[SessionMeta]) -> Result<(), String> {
 }
 
 pub fn create_session() -> Result<SessionMeta, String> {
-    let mut manifest = read_manifest()?;
+    let manifest = read_manifest()?;
+
+    if let Some(active) = manifest.iter().find(|s| s.status == "active") {
+        return Ok(active.clone());
+    }
 
     let session = SessionMeta {
         id: uuid::Uuid::new_v4().to_string(),
@@ -54,6 +58,7 @@ pub fn create_session() -> Result<SessionMeta, String> {
         chat_history: serde_json::json!([]),
     };
 
+    let mut manifest = manifest;
     manifest.push(session.clone());
     write_manifest(&manifest)?;
     Ok(session)
