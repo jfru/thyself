@@ -42,8 +42,8 @@ fn write_manifest(sessions: &[SessionMeta]) -> Result<(), String> {
     fs::write(manifest_path(), data).map_err(|e| format!("Failed to write manifest: {}", e))
 }
 
-pub fn create_session() -> Result<SessionMeta, String> {
-    let manifest = read_manifest()?;
+pub fn create_session(name: Option<&str>) -> Result<SessionMeta, String> {
+    let mut manifest = read_manifest()?;
 
     // #region agent log
     {
@@ -60,20 +60,24 @@ pub fn create_session() -> Result<SessionMeta, String> {
     }
     // #endregion
 
-    if let Some(active) = manifest.iter().find(|s| s.status == "active") {
-        return Ok(active.clone());
+    if let Some(idx) = manifest.iter().position(|s| s.status == "active") {
+        if let Some(n) = name {
+            if manifest[idx].name != n {
+                manifest[idx].name = n.to_string();
+                write_manifest(&manifest)?;
+            }
+        }
+        return Ok(manifest[idx].clone());
     }
 
     let session = SessionMeta {
         id: uuid::Uuid::new_v4().to_string(),
-        name: "Current Session".to_string(),
+        name: name.unwrap_or("Current Session").to_string(),
         created_at: chrono::Utc::now().to_rfc3339(),
         status: "active".to_string(),
         summary_file: None,
         chat_history: serde_json::json!([]),
     };
-
-    let mut manifest = manifest;
     manifest.push(session.clone());
     write_manifest(&manifest)?;
     Ok(session)

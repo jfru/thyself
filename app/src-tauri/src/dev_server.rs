@@ -315,8 +315,15 @@ async fn handle_stop_chat(
     }
 }
 
-async fn handle_create_session() -> impl IntoResponse {
-    match sessions::create_session() {
+async fn handle_create_session(
+    body: Option<Json<Value>>,
+) -> impl IntoResponse {
+    let name = body
+        .as_ref()
+        .and_then(|b| b.get("name"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    match sessions::create_session(name.as_deref()) {
         Ok(session) => (
             StatusCode::OK,
             Json(serde_json::to_value(&session).unwrap_or(json!({}))),

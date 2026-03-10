@@ -257,20 +257,21 @@ export function useStreamChat(sessionIdRef: React.RefObject<string | null>, opts
         }
       };
 
-      // Build messages array for the API
-      const apiMessages = [...messages, userMsg].map((m) => {
-        if (m.role === "user") {
-          return { role: "user", content: m.content };
-        }
-        const am = m as AssistantMessage;
-        const content = am.blocks
-          .filter((b) => b.type === "text")
-          .map((b) => ({
-            type: "text",
-            text: (b as { text: string }).text,
-          }));
-        return { role: "assistant", content };
-      });
+      const apiMessages = [...messages, userMsg]
+        .filter((m) => m.role !== "system")
+        .map((m) => {
+          if (m.role === "user") {
+            return { role: "user", content: m.content };
+          }
+          const am = m as AssistantMessage;
+          const content = am.blocks
+            .filter((b) => b.type === "text")
+            .map((b) => ({
+              type: "text",
+              text: (b as { text: string }).text,
+            }));
+          return { role: "assistant", content };
+        });
 
       try {
         const systemPrompt =

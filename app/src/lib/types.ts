@@ -56,7 +56,17 @@ export interface AssistantMessage {
   timestamp: number;
 }
 
-export type Message = UserMessage | AssistantMessage;
+export interface SystemMessage {
+  role: "system";
+  text: string;
+  action?: {
+    label: string;
+    message: string;
+  };
+  timestamp: number;
+}
+
+export type Message = UserMessage | AssistantMessage | SystemMessage;
 
 export interface StreamEvent {
   event_type: string;
