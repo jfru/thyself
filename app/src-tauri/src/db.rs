@@ -3,22 +3,28 @@ use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+use crate::profiles;
+
 pub struct DbState {
-    pub conn: Mutex<Connection>,
+    pub conn: Mutex<Option<Connection>>,
 }
 
 pub fn get_data_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("THYSELF_DATA_DIR") {
-        PathBuf::from(dir)
-    } else {
-        dirs::home_dir()
-            .unwrap_or_default()
-            .join("Library/Application Support/Thyself")
-    }
+    profiles::get_active_data_dir()
 }
 
-pub fn open_db() -> Result<Connection, String> {
+pub fn open_db() -> Result<Option<Connection>, String> {
     let db_path = get_data_dir().join("thyself.db");
+    if !db_path.exists() {
+        return Ok(None);
+    }
+    Connection::open(&db_path)
+        .map(Some)
+        .map_err(|e| format!("Failed to open database: {}", e))
+}
+
+pub fn open_db_for_profile(data_dir: &str) -> Result<Connection, String> {
+    let db_path = PathBuf::from(data_dir).join("thyself.db");
     if !db_path.exists() {
         return Err(format!("Database not found at {}", db_path.display()));
     }

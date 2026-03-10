@@ -80,6 +80,18 @@ export interface StreamEvent {
   };
 }
 
+export interface Profile {
+  id: string;
+  name: string;
+  data_dir: string;
+  api_key: string;
+  subject_name: string;
+  email: string | null;
+  selected_sources: string[];
+  onboarding_status: "pending" | "ingesting" | "extracting" | "complete";
+  createdAt: string;
+}
+
 export interface SessionMeta {
   id: string;
   name: string;

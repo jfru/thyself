@@ -2,14 +2,131 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import { ChatView } from "./components/ChatView";
 import { SessionSidebar } from "./components/SessionSidebar";
 import { UpdateNotification } from "./components/UpdateNotification";
+import { OnboardingWelcome } from "./components/OnboardingWelcome";
+import { DataSourceGrid } from "./components/DataSourceGrid";
 import { useStreamChat } from "./hooks/useStreamChat";
 import { invokeCommand } from "./lib/tauriBridge";
-import type { SessionMeta, Message } from "./lib/types";
+import type { SessionMeta, Message, Profile } from "./lib/types";
+
+type AppPhase =
+  | { kind: "loading" }
+  | { kind: "onboarding-welcome" }
+  | { kind: "onboarding-sources"; name: string; apiKey: string }
+  | { kind: "ready"; profile: Profile };
 
 function App() {
+  const [phase, setPhase] = useState<AppPhase>({ kind: "loading" });
+
+  useEffect(() => {
+    async function init() {
+      try {
+        const result = await invokeCommand<{
+          profiles: Profile[];
+          activeProfileId: string | null;
+        }>("list_profiles");
+
+        if (result.profiles.length === 0) {
+          setPhase({ kind: "onboarding-welcome" });
+          return;
+        }
+
+        const activeId = result.activeProfileId;
+        const active = activeId
+          ? result.profiles.find((p) => p.id === activeId)
+          : result.profiles[0];
+
+        if (active) {
+          setPhase({ kind: "ready", profile: active });
+        } else {
+          setPhase({ kind: "onboarding-welcome" });
+        }
+      } catch (err) {
+        console.error("Failed to load profiles:", err);
+        setPhase({ kind: "onboarding-welcome" });
+      }
+    }
+    init();
+  }, []);
+
+  function handleWelcomeNext(name: string, apiKey: string) {
+    setPhase({ kind: "onboarding-sources", name, apiKey });
+  }
+
+  async function handleSourcesNext(selectedSources: string[]) {
+    if (phase.kind !== "onboarding-sources") return;
+
+    try {
+      const profile = await invokeCommand<Profile>("cmd_create_profile", {
+        name: phase.name,
+        apiKey: phase.apiKey,
+        subjectName: phase.name,
+        email: null,
+        selectedSources: selectedSources,
+      });
+      setPhase({ kind: "ready", profile });
+    } catch (err) {
+      console.error("Failed to create profile:", err);
+    }
+  }
+
+  function handleProfileSwitch(profile: Profile) {
+    setPhase({ kind: "ready", profile });
+  }
+
+  async function handleDeleteProfile(profileId: string) {
+    try {
+      const result = await invokeCommand<{ nextProfile: Profile | null }>(
+        "cmd_delete_profile",
+        { profileId }
+      );
+      if (result.nextProfile) {
+        setPhase({ kind: "ready", profile: result.nextProfile });
+      } else {
+        setPhase({ kind: "onboarding-welcome" });
+      }
+    } catch (err) {
+      console.error("Failed to delete profile:", err);
+    }
+  }
+
+  if (phase.kind === "loading") {
+    return (
+      <div className="flex items-center justify-center h-screen bg-zinc-950">
+        <div className="text-zinc-500 text-sm">Loading...</div>
+      </div>
+    );
+  }
+
+  if (phase.kind === "onboarding-welcome") {
+    return <OnboardingWelcome onNext={handleWelcomeNext} />;
+  }
+
+  if (phase.kind === "onboarding-sources") {
+    return <DataSourceGrid onNext={handleSourcesNext} />;
+  }
+
+  return (
+    <MainApp
+      key={phase.profile.id}
+      profile={phase.profile}
+      onProfileSwitch={handleProfileSwitch}
+      onNewProfile={() => setPhase({ kind: "onboarding-welcome" })}
+      onDeleteProfile={handleDeleteProfile}
+    />
+  );
+}
+
+interface MainAppProps {
+  profile: Profile;
+  onProfileSwitch: (profile: Profile) => void;
+  onNewProfile: () => void;
+  onDeleteProfile: (profileId: string) => void;
+}
+
+function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: MainAppProps) {
   const sessionIdRef = useRef<string | null>(null);
   const { messages, isStreaming, sendMessage, stopStreaming, clearMessages, setMessages } =
-    useStreamChat(sessionIdRef);
+    useStreamChat(sessionIdRef, profile.subject_name);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [sessionSummary, setSessionSummary] = useState<string | null>(null);
@@ -37,7 +154,7 @@ function App() {
       }
     }
     resumeActiveSession();
-  }, [setMessages]);
+  }, [setMessages, profile.id]);
 
   const saveCurrentMessages = useCallback(
     async (sessionId: string, msgs: Message[]) => {
@@ -59,7 +176,6 @@ function App() {
 
       let sid = activeSessionId;
 
-      // Create a new session on first message if none active
       if (!sid) {
         try {
           const session = await invokeCommand<SessionMeta>("create_session");
@@ -77,7 +193,6 @@ function App() {
     [activeSessionId, isReadOnly, sendMessage, refreshSidebar]
   );
 
-  // Save messages whenever streaming stops
   const prevStreamingRef = useRef(isStreaming);
   if (prevStreamingRef.current && !isStreaming && activeSessionId) {
     saveCurrentMessages(activeSessionId, messages);
@@ -139,24 +254,28 @@ function App() {
     <div className="flex flex-col h-screen bg-zinc-950 text-zinc-100">
       <UpdateNotification />
       <div className="flex flex-1 min-h-0">
-      <SessionSidebar
-        onNewSession={handleNewSession}
-        onLoadSession={handleLoadSession}
-        activeSessionId={activeSessionId}
-        collapsed={sidebarCollapsed}
-        onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
-        refreshKey={sidebarRefreshKey}
-      />
-      <ChatView
-        messages={messages}
-        isStreaming={isStreaming}
-        onSend={handleSend}
-        onStop={stopStreaming}
-        onClear={!isReadOnly ? handleClearSession : undefined}
-        sessionSummary={sessionSummary}
-        sessionName={sessionName}
-        isReadOnly={isReadOnly}
-      />
+        <SessionSidebar
+          onNewSession={handleNewSession}
+          onLoadSession={handleLoadSession}
+          activeSessionId={activeSessionId}
+          collapsed={sidebarCollapsed}
+          onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
+          refreshKey={sidebarRefreshKey}
+          profile={profile}
+          onProfileSwitch={onProfileSwitch}
+          onNewProfile={onNewProfile}
+          onDeleteProfile={onDeleteProfile}
+        />
+        <ChatView
+          messages={messages}
+          isStreaming={isStreaming}
+          onSend={handleSend}
+          onStop={stopStreaming}
+          onClear={!isReadOnly ? handleClearSession : undefined}
+          sessionSummary={sessionSummary}
+          sessionName={sessionName}
+          isReadOnly={isReadOnly}
+        />
       </div>
     </div>
   );
