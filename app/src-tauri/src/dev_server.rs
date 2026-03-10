@@ -1,6 +1,7 @@
 use crate::claude::StreamEvent;
 use crate::commands::run_chat_loop;
 use crate::db::{self, get_data_dir, DbState};
+use crate::profiles;
 use crate::sessions;
 use crate::tools::get_tool_definitions;
 use axum::{
@@ -65,6 +66,14 @@ pub async fn start_dev_server() {
         .route("/api/tool_defs", get(handle_tool_defs))
         .route("/api/sync_status", get(handle_sync_status))
         .route("/api/health", get(handle_health))
+        .route("/api/list_profiles", get(handle_list_profiles))
+        .route("/api/cmd_create_profile", post(handle_create_profile))
+        .route("/api/cmd_switch_profile", post(handle_switch_profile))
+        .route("/api/cmd_delete_profile", post(handle_delete_profile))
+        .route("/api/get_active_profile", get(handle_get_active_profile))
+        .route("/api/cmd_update_profile", post(handle_update_profile))
+        .route("/api/get_subject_name", get(handle_get_subject_name))
+        .route("/api/validate_api_key", post(handle_validate_api_key))
         .layer(cors)
         .with_state(state);
 
@@ -93,9 +102,13 @@ async fn handle_query_db(
     AxumState(state): AxumState<Arc<AppState>>,
     Json(body): Json<QueryDbReq>,
 ) -> impl IntoResponse {
-    let conn = state.db.conn.lock().unwrap();
+    let guard = state.db.conn.lock().unwrap();
+    let conn = match guard.as_ref() {
+        Some(c) => c,
+        None => return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": "No database available"}))),
+    };
     let params = body.params.unwrap_or_default();
-    match db::query_rows(&conn, &body.sql, &params) {
+    match db::query_rows(conn, &body.sql, &params) {
         Ok(val) => (StatusCode::OK, Json(val)),
         Err(e) => (StatusCode::BAD_REQUEST, Json(json!({"error": e}))),
     }
@@ -111,7 +124,11 @@ async fn handle_write_db(
     AxumState(state): AxumState<Arc<AppState>>,
     Json(body): Json<WriteDbReq>,
 ) -> impl IntoResponse {
-    let conn = state.db.conn.lock().unwrap();
+    let guard = state.db.conn.lock().unwrap();
+    let conn = match guard.as_ref() {
+        Some(c) => c,
+        None => return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": "No database available"}))),
+    };
     let params = body.params.unwrap_or_default();
     match conn.execute(&body.sql, rusqlite::params_from_iter(params.iter())) {
         Ok(_) => (StatusCode::OK, Json(json!({"status": "ok"}))),
@@ -382,7 +399,15 @@ async fn handle_save_session_messages(
 async fn handle_sync_status(
     AxumState(state): AxumState<Arc<AppState>>,
 ) -> impl IntoResponse {
-    let conn = state.db.conn.lock().unwrap();
+    let guard = state.db.conn.lock().unwrap();
+    let conn = match guard.as_ref() {
+        Some(c) => c,
+        None => return Json(json!({
+            "latest_by_source": {},
+            "history": [],
+            "has_sync_runs": false
+        })),
+    };
 
     let table_exists: bool = conn
         .query_row(
@@ -456,4 +481,175 @@ async fn handle_sync_status(
         "history": history,
         "has_sync_runs": true
     }))
+}
+
+// --- Profile handlers ---
+
+async fn handle_list_profiles() -> impl IntoResponse {
+    let profiles = profiles::read_profiles().unwrap_or_default();
+    let active_id = profiles::get_active_profile_id();
+    Json(json!({
+        "profiles": profiles,
+        "activeProfileId": active_id,
+    }))
+}
+
+#[derive(Deserialize)]
+struct CreateProfileReq {
+    name: String,
+    #[serde(rename = "apiKey")]
+    api_key: String,
+    #[serde(rename = "subjectName")]
+    subject_name: String,
+    email: Option<String>,
+    #[serde(rename = "selectedSources")]
+    selected_sources: Vec<String>,
+}
+
+async fn handle_create_profile(
+    AxumState(state): AxumState<Arc<AppState>>,
+    Json(body): Json<CreateProfileReq>,
+) -> impl IntoResponse {
+    match profiles::create_profile(body.name, body.api_key, body.subject_name, body.email, body.selected_sources) {
+        Ok(profile) => {
+            if let Ok(new_conn) = db::open_db_for_profile(&profile.data_dir) {
+                let mut guard = state.db.conn.lock().unwrap();
+                *guard = Some(new_conn);
+            }
+            (StatusCode::OK, Json(serde_json::to_value(&profile).unwrap_or(json!({}))))
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e}))),
+    }
+}
+
+#[derive(Deserialize)]
+struct SwitchProfileReq {
+    #[serde(rename = "profileId")]
+    profile_id: String,
+}
+
+async fn handle_switch_profile(
+    AxumState(state): AxumState<Arc<AppState>>,
+    Json(body): Json<SwitchProfileReq>,
+) -> impl IntoResponse {
+    match profiles::switch_profile(&body.profile_id) {
+        Ok(profile) => {
+            if let Ok(new_conn) = db::open_db_for_profile(&profile.data_dir) {
+                let mut guard = state.db.conn.lock().unwrap();
+                *guard = Some(new_conn);
+            }
+            (StatusCode::OK, Json(serde_json::to_value(&profile).unwrap_or(json!({}))))
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e}))),
+    }
+}
+
+#[derive(Deserialize)]
+struct DeleteProfileReq {
+    #[serde(rename = "profileId")]
+    profile_id: String,
+}
+
+async fn handle_delete_profile(
+    AxumState(state): AxumState<Arc<AppState>>,
+    Json(body): Json<DeleteProfileReq>,
+) -> impl IntoResponse {
+    match profiles::delete_profile(&body.profile_id) {
+        Ok(next_profile) => {
+            if let Some(ref p) = next_profile {
+                if let Ok(new_conn) = db::open_db_for_profile(&p.data_dir) {
+                    let mut guard = state.db.conn.lock().unwrap();
+                    *guard = Some(new_conn);
+                }
+            } else {
+                let mut guard = state.db.conn.lock().unwrap();
+                *guard = None;
+            }
+            (StatusCode::OK, Json(json!({
+                "nextProfile": next_profile.map(|p| serde_json::to_value(&p).unwrap_or(Value::Null)),
+            })))
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e}))),
+    }
+}
+
+async fn handle_get_active_profile() -> impl IntoResponse {
+    let active_id = profiles::get_active_profile_id();
+    if let Some(id) = active_id {
+        let profiles = profiles::read_profiles().unwrap_or_default();
+        if let Some(profile) = profiles.iter().find(|p| p.id == id) {
+            return Json(serde_json::to_value(profile).unwrap_or(Value::Null));
+        }
+    }
+    Json(Value::Null)
+}
+
+#[derive(Deserialize)]
+struct UpdateProfileReq {
+    #[serde(rename = "profileId")]
+    profile_id: String,
+    #[serde(rename = "onboardingStatus")]
+    onboarding_status: Option<String>,
+    #[serde(rename = "selectedSources")]
+    selected_sources: Option<Vec<String>>,
+    #[serde(rename = "apiKey")]
+    api_key: Option<String>,
+    #[serde(rename = "subjectName")]
+    subject_name: Option<String>,
+    email: Option<String>,
+}
+
+async fn handle_update_profile(Json(body): Json<UpdateProfileReq>) -> impl IntoResponse {
+    match profiles::update_profile(
+        &body.profile_id,
+        body.onboarding_status,
+        body.selected_sources,
+        body.api_key,
+        body.subject_name,
+        body.email,
+    ) {
+        Ok(profile) => (StatusCode::OK, Json(serde_json::to_value(&profile).unwrap_or(json!({})))),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e}))),
+    }
+}
+
+async fn handle_get_subject_name() -> impl IntoResponse {
+    Json(json!(profiles::get_active_subject_name()))
+}
+
+#[derive(Deserialize)]
+struct ValidateApiKeyReq {
+    #[serde(rename = "apiKey")]
+    api_key: String,
+}
+
+async fn handle_validate_api_key(Json(body): Json<ValidateApiKeyReq>) -> impl IntoResponse {
+    let client = reqwest::Client::new();
+    let resp = client
+        .post("https://api.anthropic.com/v1/messages")
+        .header("x-api-key", &body.api_key)
+        .header("anthropic-version", "2023-06-01")
+        .header("content-type", "application/json")
+        .json(&json!({
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 1,
+            "messages": [{"role": "user", "content": "hi"}]
+        }))
+        .send()
+        .await;
+
+    match resp {
+        Ok(r) => {
+            let status = r.status().as_u16();
+            if status == 200 || status == 201 {
+                (StatusCode::OK, Json(json!({"valid": true})))
+            } else if status == 401 {
+                (StatusCode::OK, Json(json!({"valid": false, "error": "Invalid API key"})))
+            } else {
+                let body = r.text().await.unwrap_or_default();
+                (StatusCode::OK, Json(json!({"valid": false, "error": format!("Unexpected response ({}): {}", status, body)})))
+            }
+        }
+        Err(e) => (StatusCode::OK, Json(json!({"valid": false, "error": format!("Request failed: {}", e)}))),
+    }
 }

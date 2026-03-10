@@ -1,5 +1,6 @@
 use crate::claude::{stream_chat_request, StreamEvent};
 use crate::db::{get_data_dir, DbState};
+use crate::profiles;
 use crate::sessions;
 use crate::tools::{execute_tool, get_tool_definitions};
 use serde_json::{json, Value};
@@ -14,9 +15,11 @@ pub async fn query_db(
     sql: String,
     params: Option<Vec<Value>>,
 ) -> Result<Value, String> {
-    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    let guard = state.conn.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref()
+        .ok_or_else(|| "No database available. Please complete onboarding first.".to_string())?;
     let params = params.unwrap_or_default();
-    crate::db::query_rows(&conn, &sql, &params)
+    crate::db::query_rows(conn, &sql, &params)
 }
 
 #[tauri::command]
@@ -25,7 +28,9 @@ pub async fn write_db(
     sql: String,
     params: Option<Vec<String>>,
 ) -> Result<Value, String> {
-    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    let guard = state.conn.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref()
+        .ok_or_else(|| "No database available. Please complete onboarding first.".to_string())?;
     let params = params.unwrap_or_default();
     conn.execute(
         &sql,
@@ -33,6 +38,137 @@ pub async fn write_db(
     )
     .map_err(|e| format!("Write error: {}", e))?;
     Ok(json!({"status": "ok"}))
+}
+
+// --- Profile commands ---
+
+#[tauri::command]
+pub async fn list_profiles() -> Result<Value, String> {
+    let profiles = profiles::read_profiles()?;
+    let active_id = profiles::get_active_profile_id();
+    Ok(json!({
+        "profiles": profiles,
+        "activeProfileId": active_id,
+    }))
+}
+
+#[tauri::command]
+pub async fn cmd_create_profile(
+    state: State<'_, DbState>,
+    name: String,
+    api_key: String,
+    subject_name: String,
+    email: Option<String>,
+    selected_sources: Vec<String>,
+) -> Result<Value, String> {
+    let profile = profiles::create_profile(name, api_key, subject_name, email, selected_sources)?;
+
+    // Open the new profile's database
+    let new_conn = crate::db::open_db_for_profile(&profile.data_dir)?;
+    let mut guard = state.conn.lock().map_err(|e| e.to_string())?;
+    *guard = Some(new_conn);
+
+    Ok(serde_json::to_value(&profile).map_err(|e| e.to_string())?)
+}
+
+#[tauri::command]
+pub async fn cmd_switch_profile(
+    state: State<'_, DbState>,
+    profile_id: String,
+) -> Result<Value, String> {
+    let profile = profiles::switch_profile(&profile_id)?;
+
+    let new_conn = crate::db::open_db_for_profile(&profile.data_dir)?;
+    let mut guard = state.conn.lock().map_err(|e| e.to_string())?;
+    *guard = Some(new_conn);
+
+    Ok(serde_json::to_value(&profile).map_err(|e| e.to_string())?)
+}
+
+#[tauri::command]
+pub async fn get_active_profile() -> Result<Value, String> {
+    let active_id = profiles::get_active_profile_id();
+    if let Some(id) = active_id {
+        let profiles = profiles::read_profiles()?;
+        if let Some(profile) = profiles.iter().find(|p| p.id == id) {
+            return Ok(serde_json::to_value(profile).map_err(|e| e.to_string())?);
+        }
+    }
+    Ok(Value::Null)
+}
+
+#[tauri::command]
+pub async fn cmd_delete_profile(
+    state: State<'_, DbState>,
+    profile_id: String,
+) -> Result<Value, String> {
+    let next_profile = profiles::delete_profile(&profile_id)?;
+
+    if let Some(ref p) = next_profile {
+        let new_conn = crate::db::open_db_for_profile(&p.data_dir)?;
+        let mut guard = state.conn.lock().map_err(|e| e.to_string())?;
+        *guard = Some(new_conn);
+    } else {
+        let mut guard = state.conn.lock().map_err(|e| e.to_string())?;
+        *guard = None;
+    }
+
+    Ok(json!({
+        "nextProfile": next_profile.map(|p| serde_json::to_value(&p).unwrap_or(Value::Null)),
+    }))
+}
+
+#[tauri::command]
+pub async fn cmd_update_profile(
+    profile_id: String,
+    onboarding_status: Option<String>,
+    selected_sources: Option<Vec<String>>,
+    api_key: Option<String>,
+    subject_name: Option<String>,
+    email: Option<String>,
+) -> Result<Value, String> {
+    let profile = profiles::update_profile(
+        &profile_id,
+        onboarding_status,
+        selected_sources,
+        api_key,
+        subject_name,
+        email,
+    )?;
+    Ok(serde_json::to_value(&profile).map_err(|e| e.to_string())?)
+}
+
+#[tauri::command]
+pub async fn get_subject_name() -> Result<String, String> {
+    Ok(profiles::get_active_subject_name())
+}
+
+#[tauri::command]
+pub async fn validate_api_key(api_key: String) -> Result<Value, String> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .post("https://api.anthropic.com/v1/messages")
+        .header("x-api-key", &api_key)
+        .header("anthropic-version", "2023-06-01")
+        .header("content-type", "application/json")
+        .json(&json!({
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 1,
+            "messages": [{"role": "user", "content": "hi"}]
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    let status = resp.status().as_u16();
+    if status == 200 || status == 201 {
+        Ok(json!({"valid": true}))
+    } else if status == 401 {
+        Ok(json!({"valid": false, "error": "Invalid API key"}))
+    } else {
+        let body = resp.text().await.unwrap_or_default();
+        Ok(json!({"valid": false, "error": format!("Unexpected response ({}): {}", status, body)}))
+    }
 }
 
 #[tauri::command]
@@ -138,8 +274,8 @@ pub async fn run_chat_loop(
     stream_id: String,
     cancel: Option<Arc<AtomicBool>>,
 ) -> Result<Value, String> {
-    let api_key = std::env::var("ANTHROPIC_API_KEY")
-        .map_err(|_| "ANTHROPIC_API_KEY not set".to_string())?;
+    let api_key = profiles::get_active_api_key()
+        .ok_or_else(|| "No API key configured. Please complete onboarding.".to_string())?;
 
     let mut tool_defs = if tools.is_empty() {
         get_tool_definitions()
@@ -215,8 +351,11 @@ pub async fn run_chat_loop(
                     let tool_input = &block["input"];
 
                     let result = {
-                        let conn = db.conn.lock().map_err(|e| e.to_string())?;
-                        execute_tool(&conn, tool_name, tool_input)
+                        let guard = db.conn.lock().map_err(|e| e.to_string())?;
+                        match guard.as_ref() {
+                            Some(conn) => execute_tool(conn, tool_name, tool_input),
+                            None => Err("No database available".to_string()),
+                        }
                     };
 
                     let (content_val, is_error) = match result {
@@ -300,7 +439,15 @@ pub async fn get_tool_defs() -> Result<Vec<Value>, String> {
 
 #[tauri::command]
 pub async fn get_sync_status(state: State<'_, DbState>) -> Result<Value, String> {
-    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    let guard = state.conn.lock().map_err(|e| e.to_string())?;
+    let conn = match guard.as_ref() {
+        Some(c) => c,
+        None => return Ok(json!({
+            "latest_by_source": {},
+            "history": [],
+            "has_sync_runs": false
+        })),
+    };
 
     let table_exists: bool = conn
         .query_row(

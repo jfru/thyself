@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "com.thyself.app",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "cp src-tauri/icons/icon-dev.icns src-tauri/icons/icon.icns 2>/dev/null; cp src-tauri/icons/icon-dev.icns src-tauri/target/debug/Contents/Resources/icon.icns 2>/dev/null; npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "cp src-tauri/icons/icon-prod.icns src-tauri/icons/icon.icns 2>/dev/null; npm run build",
     "frontendDist": "../dist"
   },
   "app": {
