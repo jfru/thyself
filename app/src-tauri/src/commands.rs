@@ -224,8 +224,8 @@ pub async fn list_files(dir: String, pattern: Option<String>) -> Result<Vec<Stri
 }
 
 #[tauri::command]
-pub async fn create_session() -> Result<Value, String> {
-    let session = sessions::create_session()?;
+pub async fn create_session(name: Option<String>) -> Result<Value, String> {
+    let session = sessions::create_session(name.as_deref())?;
     Ok(serde_json::to_value(&session).map_err(|e| e.to_string())?)
 }
 
