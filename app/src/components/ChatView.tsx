@@ -75,7 +75,7 @@ export function ChatView({
         <SessionSummaryBlock summary={sessionSummary} sessionName={sessionName} />
       )}
       <div ref={containerRef} className="flex-1 overflow-y-auto relative">
-        <MessageList messages={messages} />
+        <MessageList messages={messages} isStreaming={isStreaming} onAction={onSend} />
       </div>
       {!isAtBottom && messages.length > 0 && (
         <div className="flex justify-center -mt-12 relative z-10">

@@ -6,7 +6,7 @@ import { OnboardingWelcome } from "./components/OnboardingWelcome";
 import { DataSourceGrid } from "./components/DataSourceGrid";
 import { useStreamChat } from "./hooks/useStreamChat";
 import { invokeCommand } from "./lib/tauriBridge";
-import type { SessionMeta, Message, Profile } from "./lib/types";
+import type { SessionMeta, Message, SystemMessage, Profile } from "./lib/types";
 
 // #region agent log
 function dlog(location: string, message: string, data: Record<string, unknown>) {
@@ -153,8 +153,6 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
   }, []);
 
   const onboardingStarted = useRef(false);
-  const sendRef = useRef(sendMessage);
-  sendRef.current = sendMessage;
 
   useEffect(() => {
     async function resumeActiveSession() {
@@ -171,7 +169,9 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
           }
           onboardingStarted.current = true;
 
-          const session = await invokeCommand<SessionMeta>("create_session");
+          const session = await invokeCommand<SessionMeta>("create_session", {
+            name: "Setup",
+          });
           // #region agent log
           dlog('App.tsx:resume', 'session created', {sessionId:session.id,historyLen:Array.isArray(session.chatHistory)?session.chatHistory.length:0});
           // #endregion
@@ -183,22 +183,28 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
             Array.isArray(session.chatHistory) && session.chatHistory.length > 0;
 
           if (hasHistory) {
-            setMessages(session.chatHistory);
-            setTimeout(() => {
-              // #region agent log
-              dlog('App.tsx:setTimeout', 'sending restart msg', {sendRefExists:!!sendRef.current});
-              // #endregion
-              sendRef.current(
-                "I've restarted the app after granting permissions. Please scan my message sources again."
-              );
-            }, 500);
+            const restartMsg: SystemMessage = {
+              role: "system",
+              text: "App restarted and ready to continue.",
+              action: {
+                label: "Continue setup",
+                message:
+                  "I've restarted the app after granting permissions. Please scan my message sources again.",
+              },
+              timestamp: Date.now(),
+            };
+            setMessages([...session.chatHistory, restartMsg]);
           } else {
-            setTimeout(() => {
-              // #region agent log
-              dlog('App.tsx:setTimeout', 'sending initial msg', {sendRefExists:!!sendRef.current});
-              // #endregion
-              sendRef.current("Let's get my message history set up.");
-            }, 500);
+            const welcomeMsg: SystemMessage = {
+              role: "system",
+              text: "Ready to connect your message history?",
+              action: {
+                label: "Let's go",
+                message: "Let's get my message history set up.",
+              },
+              timestamp: Date.now(),
+            };
+            setMessages([welcomeMsg]);
           }
           return;
         }
