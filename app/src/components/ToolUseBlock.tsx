@@ -8,6 +8,7 @@ import {
   ChevronDown,
   ChevronRight,
   Loader2,
+  RotateCcw,
 } from "lucide-react";
 import type { ToolUseBlock as ToolUseBlockType } from "../lib/types";
 
@@ -45,13 +46,60 @@ function getToolDescription(block: ToolUseBlockType): string {
       return `Listing ${(input.directory as string) || "files"}`;
     case "web_search":
       return `Searching: ${(input.query as string) || "web"}`;
+    case "scan_message_sources":
+      return "Scanning for message databases";
+    case "open_full_disk_access":
+      return "Opening Full Disk Access settings";
+    case "monitor_imessage_download":
+      return "Monitoring iMessage download";
+    case "check_iphone_connection":
+      return "Checking for connected iPhone";
+    case "find_iphone_backups":
+      return "Looking for iPhone backups";
+    case "monitor_iphone_backup":
+      return "Monitoring backup progress";
+    case "generate_backup_password":
+      return "Generating backup password";
+    case "extract_from_backup":
+      return "Extracting WhatsApp from backup";
+    case "import_messages": {
+      const source = (input.source as string) || "";
+      return source ? `Importing ${source} messages` : "Importing messages";
+    }
     default:
       return block.name;
   }
 }
 
+async function handleRestart() {
+  try {
+    if ("__TAURI_INTERNALS__" in window) {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("cmd_perform_restart");
+    } else {
+      window.location.reload();
+    }
+  } catch {
+    window.location.reload();
+  }
+}
+
 export function ToolUseBlock({ block }: ToolUseBlockProps) {
   const [expanded, setExpanded] = useState(false);
+
+  if (block.name === "restart_app" && block.status === "complete") {
+    return (
+      <div className="my-2">
+        <button
+          onClick={handleRestart}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium transition-colors"
+        >
+          <RotateCcw size={15} />
+          Restart Thyself
+        </button>
+      </div>
+    );
+  }
 
   const Icon = TOOL_ICONS[block.name] || Database;
   const description = getToolDescription(block);

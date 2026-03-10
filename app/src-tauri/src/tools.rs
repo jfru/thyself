@@ -178,7 +178,7 @@ pub fn execute_tool(
 }
 
 pub fn get_tool_definitions() -> Vec<Value> {
-    vec![
+    let mut tools = vec![
         json!({
             "name": "query_database",
             "description": "Run a read-only SQL query against the thyself.db SQLite database. Returns rows as JSON. Use this to explore the user's life data and to verify claims about their history or patterns before stating them. Always check the corrections table when referencing extraction or synthesis data. Supports SELECT and WITH queries only.",
@@ -305,5 +305,7 @@ pub fn get_tool_definitions() -> Vec<Value> {
                 "required": ["directory"]
             }
         }),
-    ]
+    ];
+    tools.extend(crate::onboarding_tools::get_onboarding_tool_definitions());
+    tools
 }

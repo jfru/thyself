@@ -13,6 +13,8 @@ pub struct Profile {
     pub email: Option<String>,
     pub selected_sources: Vec<String>,
     pub onboarding_status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backup_password: Option<String>,
     #[serde(rename = "createdAt")]
     pub created_at: String,
 }
@@ -93,6 +95,7 @@ pub fn create_profile(
         email,
         selected_sources,
         onboarding_status: "pending".to_string(),
+        backup_password: None,
         created_at: chrono::Utc::now().to_rfc3339(),
     };
 
@@ -148,6 +151,25 @@ pub fn update_profile(
     let updated = profile.clone();
     write_profiles(&profiles)?;
     Ok(updated)
+}
+
+pub fn set_backup_password(profile_id: &str, password: &str) -> Result<(), String> {
+    let mut profiles = read_profiles()?;
+    let profile = profiles
+        .iter_mut()
+        .find(|p| p.id == profile_id)
+        .ok_or_else(|| format!("Profile not found: {}", profile_id))?;
+    profile.backup_password = Some(password.to_string());
+    write_profiles(&profiles)
+}
+
+pub fn get_backup_password(profile_id: &str) -> Result<Option<String>, String> {
+    let profiles = read_profiles()?;
+    let profile = profiles
+        .iter()
+        .find(|p| p.id == profile_id)
+        .ok_or_else(|| format!("Profile not found: {}", profile_id))?;
+    Ok(profile.backup_password.clone())
 }
 
 pub fn delete_profile(profile_id: &str) -> Result<Option<Profile>, String> {
@@ -225,6 +247,7 @@ pub fn migrate_legacy_data() -> Result<bool, String> {
         email,
         selected_sources: vec![],
         onboarding_status: "complete".to_string(),
+        backup_password: None,
         created_at: chrono::Utc::now().to_rfc3339(),
     };
 

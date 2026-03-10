@@ -7,9 +7,16 @@ import type {
   TextBlock,
   WebSearchResult,
 } from "../lib/types";
-import { buildSystemPrompt } from "../lib/systemPrompt";
+import { buildSystemPrompt, buildOnboardingPrompt } from "../lib/systemPrompt";
 
-export function useStreamChat(sessionIdRef: React.RefObject<string | null>, subjectName?: string) {
+export interface StreamChatOptions {
+  subjectName?: string;
+  onboardingStatus?: string;
+  selectedSources?: string[];
+}
+
+export function useStreamChat(sessionIdRef: React.RefObject<string | null>, opts: StreamChatOptions = {}) {
+  const { subjectName, onboardingStatus, selectedSources } = opts;
   const [messages, setMessages] = useState<Message[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const unlistenRef = useRef<(() => void) | null>(null);
@@ -266,10 +273,19 @@ export function useStreamChat(sessionIdRef: React.RefObject<string | null>, subj
       });
 
       try {
+        const systemPrompt =
+          onboardingStatus === "pending" && selectedSources?.length
+            ? buildOnboardingPrompt(subjectName || "User", selectedSources)
+            : buildSystemPrompt(subjectName || "User", sessionIdRef.current ?? undefined);
+
+        // #region agent log
+        fetch('http://127.0.0.1:7709/ingest/d9149a58-da3e-4f10-b872-bd18ccc36ca6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'2ee486'},body:JSON.stringify({sessionId:'2ee486',location:'useStreamChat.ts:278',message:'system prompt selected',data:{isOnboarding: onboardingStatus === "pending" && (selectedSources?.length ?? 0) > 0, onboardingStatus, selectedSources, promptStart: systemPrompt.substring(0, 80)},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
+
         unlistenRef.current = await streamChat(
           {
             messages: apiMessages,
-            systemPrompt: buildSystemPrompt(subjectName || "User", sessionIdRef.current ?? undefined),
+            systemPrompt,
             tools: [],
             streamId,
           },

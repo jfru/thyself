@@ -66,6 +66,7 @@ pub async fn start_dev_server() {
         .route("/api/tool_defs", get(handle_tool_defs))
         .route("/api/sync_status", get(handle_sync_status))
         .route("/api/health", get(handle_health))
+        .route("/api/cmd_debug_log", post(handle_debug_log))
         .route("/api/list_profiles", get(handle_list_profiles))
         .route("/api/cmd_create_profile", post(handle_create_profile))
         .route("/api/cmd_switch_profile", post(handle_switch_profile))
@@ -653,3 +654,23 @@ async fn handle_validate_api_key(Json(body): Json<ValidateApiKeyReq>) -> impl In
         Err(e) => (StatusCode::OK, Json(json!({"valid": false, "error": format!("Request failed: {}", e)}))),
     }
 }
+
+// #region agent log
+#[derive(serde::Deserialize)]
+struct DebugLogReq {
+    location: String,
+    message: String,
+    data: String,
+}
+
+async fn handle_debug_log(Json(body): Json<DebugLogReq>) -> impl IntoResponse {
+    use std::io::Write;
+    let path = "/Users/jfru/thyself/.cursor/debug-2ee486.log";
+    let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis();
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(f, r#"{{"sessionId":"2ee486","location":"{}","message":"{}","data":{},"timestamp":{}}}"#, body.location, body.message, body.data, ts);
+    }
+    StatusCode::OK
+}
+// #endregion
+

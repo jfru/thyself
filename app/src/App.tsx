@@ -8,6 +8,12 @@ import { useStreamChat } from "./hooks/useStreamChat";
 import { invokeCommand } from "./lib/tauriBridge";
 import type { SessionMeta, Message, Profile } from "./lib/types";
 
+// #region agent log
+function dlog(location: string, message: string, data: Record<string, unknown>) {
+  invokeCommand("cmd_debug_log", { location, message, data: JSON.stringify(data) }).catch(() => {});
+}
+// #endregion
+
 type AppPhase =
   | { kind: "loading" }
   | { kind: "onboarding-welcome" }
@@ -24,6 +30,10 @@ function App() {
           profiles: Profile[];
           activeProfileId: string | null;
         }>("list_profiles");
+
+        // #region agent log
+        dlog('App.tsx:init', 'profiles loaded', {count:result.profiles.length,activeId:result.activeProfileId,activeOnboarding:result.profiles.find(p=>p.id===result.activeProfileId)?.onboarding_status});
+        // #endregion
 
         if (result.profiles.length === 0) {
           setPhase({ kind: "onboarding-welcome" });
@@ -126,7 +136,11 @@ interface MainAppProps {
 function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: MainAppProps) {
   const sessionIdRef = useRef<string | null>(null);
   const { messages, isStreaming, sendMessage, stopStreaming, clearMessages, setMessages } =
-    useStreamChat(sessionIdRef, profile.subject_name);
+    useStreamChat(sessionIdRef, {
+      subjectName: profile.subject_name,
+      onboardingStatus: profile.onboarding_status,
+      selectedSources: profile.selected_sources,
+    });
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [sessionSummary, setSessionSummary] = useState<string | null>(null);
@@ -138,18 +152,77 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
     setSidebarRefreshKey((k) => k + 1);
   }, []);
 
+  const onboardingStarted = useRef(false);
+  const sendRef = useRef(sendMessage);
+  sendRef.current = sendMessage;
+
   useEffect(() => {
     async function resumeActiveSession() {
+      // #region agent log
+      dlog('App.tsx:resume', 'effect entered', {onboardingStatus:profile.onboarding_status,onboardingStarted:onboardingStarted.current,profileId:profile.id});
+      // #endregion
       try {
+        if (profile.onboarding_status === "pending") {
+          if (onboardingStarted.current) {
+            // #region agent log
+            dlog('App.tsx:resume', 'SKIPPED - already started', {});
+            // #endregion
+            return;
+          }
+          onboardingStarted.current = true;
+
+          const session = await invokeCommand<SessionMeta>("create_session");
+          // #region agent log
+          dlog('App.tsx:resume', 'session created', {sessionId:session.id,historyLen:Array.isArray(session.chatHistory)?session.chatHistory.length:0});
+          // #endregion
+          setActiveSessionId(session.id);
+          sessionIdRef.current = session.id;
+          refreshSidebar();
+
+          const hasHistory =
+            Array.isArray(session.chatHistory) && session.chatHistory.length > 0;
+
+          if (hasHistory) {
+            setMessages(session.chatHistory);
+            setTimeout(() => {
+              // #region agent log
+              dlog('App.tsx:setTimeout', 'sending restart msg', {sendRefExists:!!sendRef.current});
+              // #endregion
+              sendRef.current(
+                "I've restarted the app after granting permissions. Please scan my message sources again."
+              );
+            }, 500);
+          } else {
+            setTimeout(() => {
+              // #region agent log
+              dlog('App.tsx:setTimeout', 'sending initial msg', {sendRefExists:!!sendRef.current});
+              // #endregion
+              sendRef.current("Let's get my message history set up.");
+            }, 500);
+          }
+          return;
+        }
+
         const manifest = await invokeCommand<SessionMeta[]>("list_sessions");
         const active = manifest.find((s) => s.status === "active");
-        if (!active) return;
-        setActiveSessionId(active.id);
-        sessionIdRef.current = active.id;
-        if (Array.isArray(active.chatHistory) && active.chatHistory.length > 0) {
-          setMessages(active.chatHistory);
+        if (active) {
+          setActiveSessionId(active.id);
+          sessionIdRef.current = active.id;
+          const full = await invokeCommand<{ session: SessionMeta; summary: string | null }>(
+            "load_session", { sessionId: active.id }
+          );
+          if (Array.isArray(full.session.chatHistory) && full.session.chatHistory.length > 0) {
+            setMessages(full.session.chatHistory);
+          }
+          if (full.session.status === "completed") {
+            setSessionSummary(full.summary);
+            setIsReadOnly(true);
+          }
         }
       } catch (err) {
+        // #region agent log
+        dlog('App.tsx:resume', 'ERROR', {error:String(err)});
+        // #endregion
         console.error("Failed to resume active session:", err);
       }
     }
@@ -163,8 +236,13 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
           sessionId,
           messages: msgs,
         });
-      } catch {
-        // best-effort persistence
+        // #region agent log
+        dlog('App.tsx:save', 'save SUCCESS', {sessionId,msgCount:msgs.length});
+        // #endregion
+      } catch (err) {
+        // #region agent log
+        dlog('App.tsx:save', 'save FAILED', {sessionId,error:String(err)});
+        // #endregion
       }
     },
     []
@@ -195,6 +273,9 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
 
   const prevStreamingRef = useRef(isStreaming);
   if (prevStreamingRef.current && !isStreaming && activeSessionId) {
+    // #region agent log
+    dlog('App.tsx:save-trigger', 'save triggered', {activeSessionId,messageCount:messages.length});
+    // #endregion
     saveCurrentMessages(activeSessionId, messages);
     refreshSidebar();
   }

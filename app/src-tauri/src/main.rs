@@ -2,5 +2,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    app_lib::run()
+    if std::env::args().any(|a| a == "--dev-server") {
+        app_lib::run_dev_server_only();
+    } else {
+        app_lib::run()
+    }
 }

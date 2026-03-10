@@ -74,11 +74,18 @@ export function AgentResponse({ message }: AgentResponseProps) {
     lastBlock.status === "complete";
 
   const allTools: ToolUseBlockType[] = [];
+  const actionTools: ToolUseBlockType[] = [];
   let hasTools = false;
+
+  const ACTION_TOOL_NAMES = ["restart_app"];
 
   for (const block of blocks) {
     if (block.type === "tool_use") {
-      allTools.push(block);
+      if (ACTION_TOOL_NAMES.includes(block.name) && block.status === "complete") {
+        actionTools.push(block);
+      } else {
+        allTools.push(block);
+      }
       hasTools = true;
     }
   }
@@ -123,7 +130,13 @@ export function AgentResponse({ message }: AgentResponseProps) {
           return null;
         })}
 
-        <ToolCallSummary tools={allTools} isStreaming={isStreaming} />
+        {allTools.length > 0 && (
+          <ToolCallSummary tools={allTools} isStreaming={isStreaming} />
+        )}
+
+        {actionTools.map((block) => (
+          <ToolUseBlock key={block.id || block.name} block={block} />
+        ))}
 
         {showProcessing && (
           <div className="flex items-center gap-2 py-2 text-xs text-zinc-500">

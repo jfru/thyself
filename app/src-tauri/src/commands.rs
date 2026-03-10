@@ -1,5 +1,6 @@
 use crate::claude::{stream_chat_request, StreamEvent};
 use crate::db::{get_data_dir, DbState};
+use crate::onboarding_tools;
 use crate::profiles;
 use crate::sessions;
 use crate::tools::{execute_tool, get_tool_definitions};
@@ -44,6 +45,16 @@ pub async fn write_db(
 
 #[tauri::command]
 pub async fn list_profiles() -> Result<Value, String> {
+    // #region agent log
+    {
+        use std::io::Write;
+        let path = "/Users/jfru/thyself/.cursor/debug-2ee486.log";
+        let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis();
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            let _ = writeln!(f, r#"{{"sessionId":"2ee486","location":"commands.rs:list_profiles","message":"called","data":{{}},"timestamp":{}}}"#, ts);
+        }
+    }
+    // #endregion
     let profiles = profiles::read_profiles()?;
     let active_id = profiles::get_active_profile_id();
     Ok(json!({
@@ -358,6 +369,27 @@ pub async fn run_chat_loop(
                         }
                     };
 
+                    // Fall through to onboarding tools if base tool not found
+                    let result = match &result {
+                        Err(e)
+                            if e.starts_with("Unknown tool:")
+                                || e == "No database available" =>
+                        {
+                            match onboarding_tools::execute_onboarding_tool(
+                                tool_name, tool_input,
+                            )
+                            .await
+                            {
+                                Ok(val) => Ok(val),
+                                Err(e2) if e2.starts_with("Unknown onboarding tool:") => {
+                                    result
+                                }
+                                Err(e2) => Err(e2),
+                            }
+                        }
+                        _ => result,
+                    };
+
                     let (content_val, is_error) = match result {
                         Ok(val) => {
                             let text = serde_json::to_string_pretty(&val).unwrap_or_default();
@@ -530,3 +562,21 @@ pub async fn get_sync_status(state: State<'_, DbState>) -> Result<Value, String>
         "has_sync_runs": true
     }))
 }
+
+#[tauri::command]
+pub fn cmd_perform_restart() {
+    onboarding_tools::perform_restart();
+}
+
+// #region agent log
+#[tauri::command]
+pub async fn cmd_debug_log(location: String, message: String, data: String) -> Result<(), String> {
+    use std::io::Write;
+    let path = "/Users/jfru/thyself/.cursor/debug-2ee486.log";
+    let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis();
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(f, r#"{{"sessionId":"2ee486","location":"{}","message":"{}","data":{},"timestamp":{}}}"#, location, message, data, ts);
+    }
+    Ok(())
+}
+// #endregion

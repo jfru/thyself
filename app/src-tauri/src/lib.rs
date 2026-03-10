@@ -2,6 +2,7 @@ mod claude;
 mod commands;
 mod db;
 mod dev_server;
+mod onboarding_tools;
 mod profiles;
 mod sessions;
 mod tools;
@@ -40,6 +41,16 @@ fn load_env() {
     dotenv::dotenv().ok();
 }
 
+pub fn run_dev_server_only() {
+    load_env();
+    if let Err(e) = profiles::migrate_legacy_data() {
+        eprintln!("Warning: legacy data migration failed: {}", e);
+    }
+    eprintln!("[dev-server-only] Starting on http://localhost:3001");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(dev_server::start_dev_server());
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     load_env();
@@ -69,6 +80,16 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .manage(db_state)
         .setup(|app| {
+            // #region agent log
+            {
+                use std::io::Write;
+                let path = "/Users/jfru/thyself/.cursor/debug-2ee486.log";
+                let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis();
+                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                    let _ = writeln!(f, r#"{{"sessionId":"2ee486","location":"lib.rs:setup","message":"tauri setup called","data":{{}},"timestamp":{}}}"#, ts);
+                }
+            }
+            // #endregion
             #[cfg(debug_assertions)]
             {
                 use tauri::Manager;
@@ -100,6 +121,8 @@ pub fn run() {
             cmd_update_profile,
             get_subject_name,
             validate_api_key,
+            cmd_perform_restart,
+            cmd_debug_log,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
