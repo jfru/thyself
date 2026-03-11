@@ -2,10 +2,12 @@
 Ingest life extraction JSON results into the database tables.
 
 Reads either from a dict (in-memory) or from saved JSON files,
-and populates the extraction_* tables.
+and populates the extraction_* tables. After ingestion, verifies
+message ID citations against source data to catch attribution errors.
 """
 
 import json
+import re
 import sqlite3
 from pathlib import Path
 
@@ -14,11 +16,31 @@ from .schema import create_tables
 
 RESULTS_DIR = EXTRACTION_RESULTS_DIR
 
+MSG_ID_PATTERN = re.compile(r"#([mcg])(\d+)")
+
 
 def _json_dumps(obj) -> str | None:
     if obj is None:
         return None
     return json.dumps(obj, ensure_ascii=False)
+
+
+def _extract_msg_ids(text: str | None) -> list[str]:
+    """Parse all message ID citations (#m123, #c456, #g789) from a string."""
+    if not text:
+        return []
+    return [f"#{m.group(1)}{m.group(2)}" for m in MSG_ID_PATTERN.finditer(text)]
+
+
+def _extract_msg_ids_from_json_array(items: list | None) -> list[str]:
+    """Parse message IDs from a JSON array of strings."""
+    if not items:
+        return []
+    ids = []
+    for item in items:
+        if isinstance(item, str):
+            ids.extend(_extract_msg_ids(item))
+    return ids
 
 
 def _ingest_single_month(conn: sqlite3.Connection, month: str, month_data: dict,
@@ -55,34 +77,40 @@ def _ingest_single_month(conn: sqlite3.Connection, month: str, month_data: dict,
         conn.execute(f"DELETE FROM {table} WHERE month_id = ?", (month_id,))
 
     for person in people:
+        sample_ids = person.get("sample_msg_ids")
         conn.execute(
-            """INSERT OR IGNORE INTO extraction_people (month_id, canonical_name, aliases)
-               VALUES (?, ?, ?)""",
-            (month_id, person["canonical_name"], _json_dumps(person.get("aliases"))),
+            """INSERT OR IGNORE INTO extraction_people (month_id, canonical_name, aliases, sample_msg_ids)
+               VALUES (?, ?, ?, ?)""",
+            (month_id, person["canonical_name"], _json_dumps(person.get("aliases")),
+             _json_dumps(sample_ids)),
         )
 
     for ep in month_data.get("episodes", []):
+        cited_ids = _extract_msg_ids_from_json_array(ep.get("key_evidence"))
         conn.execute(
             """INSERT INTO extraction_episodes 
-               (month_id, name, description, status, people, emotional_tone, key_evidence, sources)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               (month_id, name, description, status, people, emotional_tone, key_evidence, sources, source_msg_ids)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 month_id, ep["name"], ep.get("description"), ep.get("status"),
                 _json_dumps(ep.get("people")), ep.get("emotional_tone"),
                 _json_dumps(ep.get("key_evidence")), _json_dumps(ep.get("sources")),
+                _json_dumps(cited_ids) if cited_ids else None,
             ),
         )
 
     for rel in month_data.get("relationships", []):
+        cited_ids = _extract_msg_ids_from_json_array(rel.get("notable_exchanges"))
         conn.execute(
             """INSERT INTO extraction_relationships 
-               (month_id, person, role, quality_this_month, notable_exchanges, sources)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+               (month_id, person, role, quality_this_month, notable_exchanges, sources, source_msg_ids)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (
                 month_id, rel["person"], rel.get("role"),
                 rel.get("quality_this_month"),
                 _json_dumps(rel.get("notable_exchanges")),
                 _json_dumps(rel.get("sources")),
+                _json_dumps(cited_ids) if cited_ids else None,
             ),
         )
 
@@ -128,6 +156,148 @@ def _ingest_single_month(conn: sqlite3.Connection, month: str, month_data: dict,
     return month_id
 
 
+def _resolve_people_contacts(conn: sqlite3.Connection, month_id: int) -> None:
+    """Auto-resolve extraction_people.contact_id using sample_msg_ids.
+
+    For each person with sample_msg_ids, look up the cited messages and
+    derive the contact_id from the source message's contact_id.
+    """
+    rows = conn.execute(
+        "SELECT id, canonical_name, sample_msg_ids FROM extraction_people WHERE month_id = ? AND sample_msg_ids IS NOT NULL",
+        (month_id,),
+    ).fetchall()
+
+    for person_id, canonical_name, sample_ids_json in rows:
+        try:
+            sample_ids = json.loads(sample_ids_json) if sample_ids_json else []
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+        contact_ids = set()
+        for msg_id in sample_ids:
+            m = MSG_ID_PATTERN.match(msg_id)
+            if not m:
+                continue
+            source_type, rowid = m.group(1), int(m.group(2))
+            if source_type == "m":
+                row = conn.execute("SELECT contact_id FROM messages WHERE rowid = ?", (rowid,)).fetchone()
+                if row and row[0]:
+                    contact_ids.add(row[0])
+
+        if len(contact_ids) == 1:
+            contact_id = contact_ids.pop()
+            conn.execute(
+                "UPDATE extraction_people SET contact_id = ? WHERE id = ?",
+                (contact_id, person_id),
+            )
+
+
+def verify_attributions(conn: sqlite3.Connection, month_id: int) -> list[dict]:
+    """Verify that cited message IDs match the attributed person.
+
+    Returns a list of mismatches found, each with details about the error.
+    """
+    contact_name_cache: dict[int, str] = {}
+
+    def _get_contact_name(contact_id: int) -> str:
+        if contact_id not in contact_name_cache:
+            row = conn.execute(
+                "SELECT display_name FROM contacts WHERE id = ?", (contact_id,)
+            ).fetchone()
+            contact_name_cache[contact_id] = row[0] if row else f"contact-{contact_id}"
+        return contact_name_cache[contact_id]
+
+    mismatches = []
+
+    # Check extraction_relationships
+    rels = conn.execute(
+        "SELECT id, person, notable_exchanges, source_msg_ids FROM extraction_relationships WHERE month_id = ?",
+        (month_id,),
+    ).fetchall()
+
+    for rel_id, person, notable_exchanges, source_msg_ids_json in rels:
+        try:
+            cited_ids = json.loads(source_msg_ids_json) if source_msg_ids_json else []
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+        for msg_id in cited_ids:
+            m = MSG_ID_PATTERN.match(msg_id)
+            if not m:
+                continue
+            source_type, rowid = m.group(1), int(m.group(2))
+            if source_type != "m":
+                continue
+
+            row = conn.execute("SELECT contact_id, is_from_me FROM messages WHERE rowid = ?", (rowid,)).fetchone()
+            if not row:
+                continue
+            contact_id, is_from_me = row
+            if is_from_me or not contact_id:
+                continue
+
+            actual_name = _get_contact_name(contact_id)
+            if person.lower() not in actual_name.lower() and actual_name.lower() not in person.lower():
+                mismatches.append({
+                    "type": "relationship_attribution",
+                    "month_id": month_id,
+                    "table": "extraction_relationships",
+                    "row_id": rel_id,
+                    "attributed_person": person,
+                    "actual_contact": actual_name,
+                    "actual_contact_id": contact_id,
+                    "msg_id": msg_id,
+                })
+
+    # Check extraction_episodes
+    eps = conn.execute(
+        "SELECT id, name, people, source_msg_ids FROM extraction_episodes WHERE month_id = ?",
+        (month_id,),
+    ).fetchall()
+
+    for ep_id, ep_name, people_json, source_msg_ids_json in eps:
+        try:
+            cited_ids = json.loads(source_msg_ids_json) if source_msg_ids_json else []
+            people_list = json.loads(people_json) if people_json else []
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+        for msg_id in cited_ids:
+            m = MSG_ID_PATTERN.match(msg_id)
+            if not m:
+                continue
+            source_type, rowid = m.group(1), int(m.group(2))
+            if source_type != "m":
+                continue
+
+            row = conn.execute("SELECT contact_id, is_from_me FROM messages WHERE rowid = ?", (rowid,)).fetchone()
+            if not row:
+                continue
+            contact_id, is_from_me = row
+            if is_from_me or not contact_id:
+                continue
+
+            actual_name = _get_contact_name(contact_id)
+            name_matched = any(
+                p.lower() in actual_name.lower() or actual_name.lower() in p.lower()
+                for p in people_list
+            )
+            if not name_matched:
+                mismatches.append({
+                    "type": "episode_attribution",
+                    "month_id": month_id,
+                    "table": "extraction_episodes",
+                    "row_id": ep_id,
+                    "episode": ep_name,
+                    "listed_people": people_list,
+                    "actual_contact": actual_name,
+                    "actual_contact_id": contact_id,
+                    "msg_id": msg_id,
+                })
+
+    return mismatches
+
+
 def ingest_extraction(result: dict, db_path: str | Path | None = None) -> list[int]:
     """Ingest an extraction result into the database.
     
@@ -149,17 +319,49 @@ def ingest_extraction(result: dict, db_path: str | Path | None = None) -> list[i
             for month_data in result["months"]:
                 month = month_data["month"]
                 month_id = _ingest_single_month(conn, month, month_data, people, raw_json)
+                _resolve_people_contacts(conn, month_id)
                 ids.append(month_id)
             conn.commit()
+
+            all_mismatches = []
+            for month_id in ids:
+                all_mismatches.extend(verify_attributions(conn, month_id))
+            if all_mismatches:
+                _report_mismatches(all_mismatches)
+
             return ids
         else:
             month = result.get("month") or result.get("period")
             people = result.get("people", [])
             month_id = _ingest_single_month(conn, month, result, people, raw_json)
+            _resolve_people_contacts(conn, month_id)
             conn.commit()
+
+            mismatches = verify_attributions(conn, month_id)
+            if mismatches:
+                _report_mismatches(mismatches)
+
             return [month_id]
     finally:
         conn.close()
+
+
+def _report_mismatches(mismatches: list[dict]) -> None:
+    """Print attribution mismatches as warnings."""
+    print(f"\n  ⚠ ATTRIBUTION MISMATCHES FOUND: {len(mismatches)}")
+    for mm in mismatches:
+        if mm["type"] == "relationship_attribution":
+            print(
+                f"    - extraction_relationships row {mm['row_id']}: "
+                f"attributed to \"{mm['attributed_person']}\" but {mm['msg_id']} "
+                f"is from \"{mm['actual_contact']}\" (contact_id={mm['actual_contact_id']})"
+            )
+        elif mm["type"] == "episode_attribution":
+            print(
+                f"    - extraction_episodes row {mm['row_id']} (\"{mm['episode']}\"): "
+                f"{mm['msg_id']} is from \"{mm['actual_contact']}\" "
+                f"but listed people are {mm['listed_people']}"
+            )
 
 
 def ingest_from_files(filenames: list[str] | None = None, db_path: str | Path | None = None) -> list[int]:
