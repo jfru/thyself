@@ -9,6 +9,7 @@ import {
   ChevronRight,
   Loader2,
   RotateCcw,
+  ExternalLink,
 } from "lucide-react";
 import type { ToolUseBlock as ToolUseBlockType } from "../lib/types";
 
@@ -84,6 +85,36 @@ async function handleRestart() {
   }
 }
 
+async function handleOpenIcloudSettings() {
+  try {
+    if ("__TAURI_INTERNALS__" in window) {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("cmd_open_icloud_settings");
+    } else {
+      await fetch("http://localhost:3001/api/cmd_open_icloud_settings", {
+        method: "POST",
+      });
+    }
+  } catch {
+    // best-effort
+  }
+}
+
+async function handleOpenFinderIphone() {
+  try {
+    if ("__TAURI_INTERNALS__" in window) {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("cmd_open_finder_iphone");
+    } else {
+      await fetch("http://localhost:3001/api/cmd_open_finder_iphone", {
+        method: "POST",
+      });
+    }
+  } catch {
+    // best-effort
+  }
+}
+
 export function ToolUseBlock({ block }: ToolUseBlockProps) {
   const [expanded, setExpanded] = useState(false);
 
@@ -96,6 +127,34 @@ export function ToolUseBlock({ block }: ToolUseBlockProps) {
         >
           <RotateCcw size={15} />
           Restart Thyself
+        </button>
+      </div>
+    );
+  }
+
+  if (block.name === "open_icloud_settings" && block.status === "complete") {
+    return (
+      <div className="my-2">
+        <button
+          onClick={handleOpenIcloudSettings}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-zinc-700 hover:bg-zinc-600 text-white text-sm font-medium transition-colors"
+        >
+          <ExternalLink size={15} />
+          Open iCloud Settings
+        </button>
+      </div>
+    );
+  }
+
+  if (block.name === "open_finder_iphone" && block.status === "complete") {
+    return (
+      <div className="my-2">
+        <button
+          onClick={handleOpenFinderIphone}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-zinc-700 hover:bg-zinc-600 text-white text-sm font-medium transition-colors"
+        >
+          <ExternalLink size={15} />
+          Open Finder
         </button>
       </div>
     );

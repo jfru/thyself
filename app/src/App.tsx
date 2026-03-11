@@ -6,7 +6,7 @@ import { OnboardingWelcome } from "./components/OnboardingWelcome";
 import { DataSourceGrid } from "./components/DataSourceGrid";
 import { useStreamChat } from "./hooks/useStreamChat";
 import { invokeCommand } from "./lib/tauriBridge";
-import type { SessionMeta, Message, SystemMessage, Profile } from "./lib/types";
+import type { SessionMeta, Message, SystemMessage, Profile, ImageAttachment } from "./lib/types";
 
 // #region agent log
 function dlog(location: string, message: string, data: Record<string, unknown>) {
@@ -189,7 +189,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
               action: {
                 label: "Continue setup",
                 message:
-                  "I've restarted the app after granting permissions. Please scan my message sources again.",
+                  "I'm ready to continue with the setup.",
               },
               timestamp: Date.now(),
             };
@@ -255,7 +255,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
   );
 
   const handleSend = useCallback(
-    async (text: string) => {
+    async (text: string, images?: ImageAttachment[]) => {
       if (isReadOnly) return;
 
       let sid = activeSessionId;
@@ -272,7 +272,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
         }
       }
 
-      await sendMessage(text);
+      await sendMessage(text, images);
     },
     [activeSessionId, isReadOnly, sendMessage, refreshSidebar]
   );

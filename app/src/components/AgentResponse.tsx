@@ -73,70 +73,63 @@ export function AgentResponse({ message }: AgentResponseProps) {
     lastBlock?.type === "tool_use" &&
     lastBlock.status === "complete";
 
-  const allTools: ToolUseBlockType[] = [];
-  const actionTools: ToolUseBlockType[] = [];
-  let hasTools = false;
+  const ACTION_TOOL_NAMES = ["restart_app", "open_icloud_settings", "open_finder_iphone"];
 
-  const ACTION_TOOL_NAMES = ["restart_app"];
+  const isActionTool = (block: ContentBlock): block is ToolUseBlockType =>
+    block.type === "tool_use" &&
+    ACTION_TOOL_NAMES.includes(block.name) &&
+    block.status === "complete";
 
-  for (const block of blocks) {
-    if (block.type === "tool_use") {
-      if (ACTION_TOOL_NAMES.includes(block.name) && block.status === "complete") {
-        actionTools.push(block);
-      } else {
-        allTools.push(block);
-      }
-      hasTools = true;
+  // Build render segments: walk blocks in order, grouping consecutive
+  // non-action tools into collapsible summaries while keeping action
+  // tools and text/thinking blocks at their original positions.
+  const segments: { type: "content"; block: ContentBlock; idx: number }[] | { type: "tool_group"; tools: ToolUseBlockType[] }[] = [];
+  const renderSegments: (
+    | { kind: "content"; block: ContentBlock; idx: number }
+    | { kind: "action_tool"; block: ToolUseBlockType }
+    | { kind: "tool_group"; tools: ToolUseBlockType[] }
+  )[] = [];
+
+  let pendingTools: ToolUseBlockType[] = [];
+
+  const flushTools = () => {
+    if (pendingTools.length > 0) {
+      renderSegments.push({ kind: "tool_group", tools: [...pendingTools] });
+      pendingTools = [];
+    }
+  };
+
+  for (let i = 0; i < blocks.length; i++) {
+    const block = blocks[i];
+    if (isActionTool(block)) {
+      flushTools();
+      renderSegments.push({ kind: "action_tool", block });
+    } else if (block.type === "tool_use") {
+      pendingTools.push(block);
+    } else {
+      flushTools();
+      renderSegments.push({ kind: "content", block, idx: i });
     }
   }
-
-  const lastToolIndex = blocks.reduce(
-    (acc, b, i) => (b.type === "tool_use" ? i : acc),
-    -1
-  );
-
-  if (!hasTools) {
-    return (
-      <div className="flex justify-start">
-        <div className="max-w-[90%] space-y-1">
-          {blocks.map((block, i) => {
-            if (block.type === "thinking") return <ThinkingBlock key={i} block={block} />;
-            if (block.type === "text") return <StreamingText key={i} block={block} />;
-            return null;
-          })}
-        </div>
-      </div>
-    );
-  }
-
-  const leadingBlocks: ContentBlock[] = [];
-  const trailingBlocks: ContentBlock[] = [];
-
-  const firstToolIdx = blocks.findIndex((b) => b.type === "tool_use");
-  for (let i = 0; i < firstToolIdx; i++) {
-    leadingBlocks.push(blocks[i]);
-  }
-
-  for (let i = lastToolIndex + 1; i < blocks.length; i++) {
-    trailingBlocks.push(blocks[i]);
-  }
+  flushTools();
 
   return (
     <div className="flex justify-start">
       <div className="max-w-[90%] space-y-1">
-        {leadingBlocks.map((block, i) => {
-          if (block.type === "thinking") return <ThinkingBlock key={`lead-${i}`} block={block} />;
-          if (block.type === "text") return <StreamingText key={`lead-${i}`} block={block} />;
+        {renderSegments.map((seg, i) => {
+          if (seg.kind === "content") {
+            if (seg.block.type === "thinking") return <ThinkingBlock key={`c-${seg.idx}`} block={seg.block} />;
+            if (seg.block.type === "text") return <StreamingText key={`c-${seg.idx}`} block={seg.block} />;
+            return null;
+          }
+          if (seg.kind === "action_tool") {
+            return <ToolUseBlock key={seg.block.id || seg.block.name} block={seg.block} />;
+          }
+          if (seg.kind === "tool_group") {
+            return <ToolCallSummary key={`tg-${i}`} tools={seg.tools} isStreaming={isStreaming} />;
+          }
           return null;
         })}
-
-        {allTools.length > 0 && (
-          <ToolCallSummary tools={allTools} isStreaming={isStreaming} />
-        )}
-
-        {actionTools.map((block) => (
-          <ToolUseBlock key={block.id || block.name} block={block} />
-        ))}
 
         {showProcessing && (
           <div className="flex items-center gap-2 py-2 text-xs text-zinc-500">
@@ -144,12 +137,6 @@ export function AgentResponse({ message }: AgentResponseProps) {
             <span>Processing...</span>
           </div>
         )}
-
-        {trailingBlocks.map((block, i) => {
-          if (block.type === "thinking") return <ThinkingBlock key={`trail-${i}`} block={block} />;
-          if (block.type === "text") return <StreamingText key={`trail-${i}`} block={block} />;
-          return null;
-        })}
       </div>
     </div>
   );

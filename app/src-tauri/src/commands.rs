@@ -568,6 +568,16 @@ pub fn cmd_perform_restart() {
     onboarding_tools::perform_restart();
 }
 
+#[tauri::command]
+pub fn cmd_open_icloud_settings() {
+    onboarding_tools::perform_open_icloud_settings();
+}
+
+#[tauri::command]
+pub fn cmd_open_finder_iphone() {
+    onboarding_tools::perform_open_finder_iphone();
+}
+
 // #region agent log
 #[tauri::command]
 pub async fn cmd_debug_log(location: String, message: String, data: String) -> Result<(), String> {

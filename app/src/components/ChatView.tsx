@@ -4,13 +4,13 @@ import { InputBox } from "./InputBox";
 import { SessionSummaryBlock } from "./SessionSummaryBlock";
 import { SyncStatusIndicator } from "./SyncStatusIndicator";
 import { useAutoScroll } from "../hooks/useAutoScroll";
-import type { Message } from "../lib/types";
+import type { Message, ImageAttachment } from "../lib/types";
 import { ArrowDown, Trash2 } from "lucide-react";
 
 interface ChatViewProps {
   messages: Message[];
   isStreaming: boolean;
-  onSend: (text: string) => void;
+  onSend: (text: string, images?: ImageAttachment[]) => void;
   onStop: () => void;
   onClear?: () => void;
   sessionSummary?: string | null;

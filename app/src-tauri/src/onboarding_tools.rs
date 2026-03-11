@@ -125,6 +125,8 @@ pub async fn execute_onboarding_tool(
     match tool_name {
         "scan_message_sources" => scan_message_sources(),
         "open_full_disk_access" => open_full_disk_access(),
+        "open_icloud_settings" => open_icloud_settings(),
+        "open_finder_iphone" => open_finder_iphone(),
         "restart_app" => restart_app(),
         "monitor_imessage_download" => monitor_imessage_download(tool_input).await,
         "generate_backup_password" => generate_backup_password(),
@@ -192,7 +194,7 @@ fn scan_single_source(
                 json!({
                     "status": "permission_denied_dev",
                     "path": path.display().to_string(),
-                    "message": format!("{} database exists but can't be read in dev mode. Tauri dev copies the binary to a temp path, so Full Disk Access grants don't persist across rebuilds. The production .app build won't have this issue. The database file exists and is ready.", label),
+                    "message": format!("{} database exists but can't be read. In dev mode, the terminal app or IDE running 'tauri dev' needs Full Disk Access. Grant FDA to your terminal (e.g. Terminal, Warp, iTerm) or IDE (e.g. Cursor) in System Settings → Privacy & Security → Full Disk Access.", label),
                 })
             } else {
                 json!({
@@ -213,7 +215,7 @@ fn scan_single_source(
 fn query_source_stats_imessage(conn: &rusqlite::Connection) -> Value {
     let msg_count: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM message WHERE text IS NOT NULL AND text != ''",
+            "SELECT COUNT(*) FROM message",
             [],
             |row| row.get(0),
         )
@@ -225,7 +227,7 @@ fn query_source_stats_imessage(conn: &rusqlite::Connection) -> Value {
 
     let (min_date, max_date): (Option<i64>, Option<i64>) = conn
         .query_row(
-            "SELECT MIN(date), MAX(date) FROM message WHERE text IS NOT NULL AND text != ''",
+            "SELECT MIN(date), MAX(date) FROM message WHERE date > 0",
             [],
             |row| Ok((row.get(0).ok(), row.get(1).ok())),
         )
@@ -329,11 +331,44 @@ fn open_full_disk_access() -> Result<Value, String> {
         "executable": exe,
         "is_dev": is_dev,
         "message": if is_dev {
-            format!("Opened System Settings → Full Disk Access. In dev mode the binary runs from a temp path ({}). You need to add THIS specific binary, or grant FDA to your terminal app (e.g. Warp, Terminal) instead.", exe)
+            "Opened System Settings → Full Disk Access. In dev mode, grant FDA to your terminal app (Terminal, Warp, iTerm) or IDE (Cursor) — not the Thyself binary. You may need to restart the terminal and re-run tauri dev afterward.".to_string()
         } else {
             "Opened System Settings → Privacy & Security → Full Disk Access. Thyself should appear in the list — toggle it ON.".to_string()
         },
     }))
+}
+
+// ---------------------------------------------------------------------------
+// open_icloud_settings
+// ---------------------------------------------------------------------------
+
+fn open_icloud_settings() -> Result<Value, String> {
+    Ok(json!({
+        "status": "ready",
+    }))
+}
+
+pub fn perform_open_icloud_settings() {
+    let _ = std::process::Command::new("open")
+        .arg("x-apple.systempreferences:com.apple.systempreferences.AppleIDSettings?email/prefs/storage?root=APPLE_ACCOUNT&path=ICLOUD_SERVICE&dataclassId=com.apple.Dataclass.Messages")
+        .spawn();
+}
+
+// ---------------------------------------------------------------------------
+// open_finder_iphone  (button-based, same pattern as open_icloud_settings)
+// ---------------------------------------------------------------------------
+
+fn open_finder_iphone() -> Result<Value, String> {
+    Ok(json!({
+        "status": "ready",
+    }))
+}
+
+pub fn perform_open_finder_iphone() {
+    let _ = std::process::Command::new("open")
+        .arg("-a")
+        .arg("Finder")
+        .spawn();
 }
 
 // ---------------------------------------------------------------------------
@@ -346,7 +381,7 @@ fn query_imessage_stats() -> Result<(i64, Option<String>), String> {
 
     let count: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM message WHERE text IS NOT NULL AND text != ''",
+            "SELECT COUNT(*) FROM message",
             [],
             |row| row.get(0),
         )
@@ -354,7 +389,7 @@ fn query_imessage_stats() -> Result<(i64, Option<String>), String> {
 
     let min_date: Option<i64> = conn
         .query_row(
-            "SELECT MIN(date) FROM message WHERE text IS NOT NULL AND text != ''",
+            "SELECT MIN(date) FROM message WHERE date > 0",
             [],
             |row| row.get(0),
         )
@@ -834,6 +869,24 @@ pub fn get_onboarding_tool_definitions() -> Vec<Value> {
         json!({
             "name": "open_full_disk_access",
             "description": "Opens macOS System Settings directly to the Full Disk Access page. Call this when scan_message_sources returns 'permission_denied' for any source. After calling this, tell the user to toggle Thyself ON in the list, then re-call scan_message_sources to verify.",
+            "input_schema": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }),
+        json!({
+            "name": "open_icloud_settings",
+            "description": "Shows a clickable 'Open iCloud Settings' button in the chat. The user clicks it when ready to open System Settings to the Apple Account / iCloud page. Always explain the instructions BEFORE calling this tool, so the user knows what to do before they open settings.",
+            "input_schema": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }),
+        json!({
+            "name": "open_finder_iphone",
+            "description": "Shows a clickable 'Open Finder' button in the chat. The user clicks it to open Finder where they can select their iPhone in the sidebar. Always explain the backup instructions BEFORE calling this tool.",
             "input_schema": {
                 "type": "object",
                 "properties": {},
