@@ -5,8 +5,11 @@ import { BrainCircuit, CheckCircle2, Mail, MessageCircle, MessageSquareText, Plu
 
 interface SetupSourcesStatusPanelProps {
   selectedSources: string[];
-  onAddSource?: (sourceId: string) => void | Promise<void>;
-  onRequestSourceSetup?: (sourceId: string) => void | Promise<void>;
+  onAddSource?: (sourceId: string) => void | Promise<void | string[]>;
+  onRequestSourceSetup?: (
+    sourceId: string,
+    selectedSourcesOverride?: string[]
+  ) => void | Promise<void>;
   onRemoveSource?: (sourceId: string) => void | Promise<void>;
 }
 
@@ -99,8 +102,11 @@ export function SetupSourcesStatusPanel({
                   <button
                     key={source.id}
                     onClick={async () => {
-                      await onAddSource?.(source.id);
-                      await onRequestSourceSetup?.(source.id);
+                      const updated = await onAddSource?.(source.id);
+                      const selectedSourcesOverride = Array.isArray(updated)
+                        ? updated
+                        : undefined;
+                      await onRequestSourceSetup?.(source.id, selectedSourcesOverride);
                       setShowAddMenu(false);
                     }}
                     className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-800"

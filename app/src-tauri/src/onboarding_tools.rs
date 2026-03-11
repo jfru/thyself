@@ -118,6 +118,96 @@ fn find_project_root() -> Option<PathBuf> {
     None
 }
 
+fn ensure_sync_runs_table(conn: &rusqlite::Connection) -> Result<(), String> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS sync_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source TEXT NOT NULL,
+            started_at DATETIME NOT NULL,
+            finished_at DATETIME,
+            messages_added INTEGER DEFAULT 0,
+            status TEXT DEFAULT 'running',
+            error_message TEXT,
+            last_message_at DATETIME
+        )",
+    )
+    .map_err(|e| format!("Failed to ensure sync_runs table: {}", e))
+}
+
+fn sync_source_key(source: &str, method: &str) -> String {
+    match (source, method) {
+        ("imessage", "local_sync") => "imessage".to_string(),
+        ("whatsapp", "local_sync") => "whatsapp_desktop".to_string(),
+        ("whatsapp", "backup_import") => "whatsapp_desktop".to_string(),
+        ("gmail", "local_sync") => "gmail".to_string(),
+        _ => source.to_string(),
+    }
+}
+
+fn source_message_count(conn: &rusqlite::Connection, source: &str) -> Result<i64, String> {
+    let sql = match source {
+        "imessage" => "SELECT COUNT(*) FROM messages WHERE source = 'imessage'",
+        "whatsapp" => "SELECT COUNT(*) FROM messages WHERE source = 'whatsapp'",
+        "gmail" => "SELECT COUNT(*) FROM gmail_messages",
+        _ => return Ok(0),
+    };
+    conn.query_row(sql, [], |row| row.get::<_, i64>(0))
+        .map_err(|e| format!("Failed to query source count: {}", e))
+}
+
+fn source_last_message_at(conn: &rusqlite::Connection, source: &str) -> Result<Option<String>, String> {
+    let sql = match source {
+        "imessage" | "whatsapp" => "SELECT MAX(sent_at) FROM messages WHERE source = ?1",
+        "gmail" => "SELECT MAX(sent_at) FROM gmail_messages",
+        _ => return Ok(None),
+    };
+
+    if source == "imessage" || source == "whatsapp" {
+        conn.query_row(sql, [source], |row| row.get::<_, Option<String>>(0))
+            .map_err(|e| format!("Failed to query source last_message_at: {}", e))
+    } else {
+        conn.query_row(sql, [], |row| row.get::<_, Option<String>>(0))
+            .map_err(|e| format!("Failed to query source last_message_at: {}", e))
+    }
+}
+
+fn start_sync_run(db_path: &std::path::Path, source_key: &str) -> Result<i64, String> {
+    let conn = rusqlite::Connection::open(db_path)
+        .map_err(|e| format!("Failed to open DB for sync run start: {}", e))?;
+    ensure_sync_runs_table(&conn)?;
+    conn.execute(
+        "INSERT INTO sync_runs (source, started_at, status) VALUES (?1, datetime('now'), 'running')",
+        [source_key],
+    )
+    .map_err(|e| format!("Failed to start sync run: {}", e))?;
+    Ok(conn.last_insert_rowid())
+}
+
+fn finish_sync_run(
+    db_path: &std::path::Path,
+    run_id: i64,
+    messages_added: i64,
+    last_message_at: Option<String>,
+    error: Option<String>,
+) -> Result<(), String> {
+    let conn = rusqlite::Connection::open(db_path)
+        .map_err(|e| format!("Failed to open DB for sync run finish: {}", e))?;
+    ensure_sync_runs_table(&conn)?;
+    let status = if error.is_some() { "failed" } else { "completed" };
+    conn.execute(
+        "UPDATE sync_runs
+         SET finished_at = datetime('now'),
+             messages_added = ?1,
+             status = ?2,
+             error_message = ?3,
+             last_message_at = ?4
+         WHERE id = ?5",
+        rusqlite::params![messages_added, status, error, last_message_at, run_id],
+    )
+    .map_err(|e| format!("Failed to finish sync run: {}", e))?;
+    Ok(())
+}
+
 pub async fn execute_onboarding_tool(
     tool_name: &str,
     tool_input: &Value,
@@ -809,6 +899,7 @@ async fn import_messages(tool_input: &Value) -> Result<Value, String> {
         ("imessage", "local_sync") => project_root.join("sync/imessage_sync.py"),
         ("whatsapp", "local_sync") => project_root.join("sync/whatsapp_desktop_sync.py"),
         ("whatsapp", "backup_import") => project_root.join("import_whatsapp.py"),
+        ("gmail", "local_sync") => project_root.join("sync/gmail_sync.py"),
         _ => {
             return Err(format!(
                 "Unknown source/method combination: {}/{}",
@@ -822,6 +913,15 @@ async fn import_messages(tool_input: &Value) -> Result<Value, String> {
     }
 
     let data_dir = profiles::get_active_data_dir();
+    let db_path = data_dir.join("thyself.db");
+    let source_key = sync_source_key(source, method);
+
+    let count_before = rusqlite::Connection::open(&db_path)
+        .ok()
+        .and_then(|conn| source_message_count(&conn, source).ok())
+        .unwrap_or(0);
+
+    let run_id = start_sync_run(&db_path, &source_key).ok();
 
     let output = tokio::process::Command::new("python3")
         .arg(&script)
@@ -835,13 +935,33 @@ async fn import_messages(tool_input: &Value) -> Result<Value, String> {
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
     if output.status.success() {
+        let (messages_added, last_message_at) = match rusqlite::Connection::open(&db_path) {
+            Ok(conn) => {
+                let count_after = source_message_count(&conn, source).unwrap_or(count_before);
+                let added = count_after.saturating_sub(count_before);
+                let last = source_last_message_at(&conn, source).ok().flatten();
+                (added, last)
+            }
+            Err(_) => (0, None),
+        };
+
+        if let Some(id) = run_id {
+            let _ = finish_sync_run(&db_path, id, messages_added, last_message_at.clone(), None);
+        }
+
         Ok(json!({
             "status": "ok",
             "output": stdout,
             "source": source,
             "method": method,
+            "sync_source": source_key,
+            "messages_added": messages_added,
+            "last_message_at": last_message_at,
         }))
     } else {
+        if let Some(id) = run_id {
+            let _ = finish_sync_run(&db_path, id, 0, None, Some(stderr.clone()));
+        }
         Err(format!(
             "{} failed:\nstdout: {}\nstderr: {}",
             script.display(),
@@ -985,13 +1105,13 @@ pub fn get_onboarding_tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "import_messages",
-            "description": "Import messages from a local database or extracted backup into Thyself. For iMessage, use source='imessage' with method='local_sync' (reads Mac's chat.db). For WhatsApp, use source='whatsapp' with method='local_sync' (WhatsApp Desktop) or method='backup_import' (from extracted iPhone backup).",
+            "description": "Import messages from a local database or extracted backup into Thyself. For iMessage, use source='imessage' with method='local_sync' (reads Mac's chat.db). For WhatsApp, use source='whatsapp' with method='local_sync' (WhatsApp Desktop) or method='backup_import' (from extracted iPhone backup). For Gmail, use source='gmail' with method='local_sync' (uses configured Google ADC credentials).",
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "source": {
                         "type": "string",
-                        "enum": ["imessage", "whatsapp"],
+                        "enum": ["imessage", "whatsapp", "gmail"],
                         "description": "Which message source to import"
                     },
                     "method": {
