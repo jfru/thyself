@@ -114,6 +114,7 @@ export interface SessionMeta {
   name: string;
   createdAt: string;
   status: "active" | "completed";
+  kind?: "conversation" | "setup";
   summaryFile: string | null;
   chatHistory: Message[];
 }

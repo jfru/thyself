@@ -3,6 +3,7 @@ import { MessageList } from "./MessageList";
 import { InputBox } from "./InputBox";
 import { SessionSummaryBlock } from "./SessionSummaryBlock";
 import { SyncStatusIndicator } from "./SyncStatusIndicator";
+import { SetupSourcesStatusPanel } from "./SetupSourcesStatusPanel";
 import { useAutoScroll } from "../hooks/useAutoScroll";
 import type { Message, ImageAttachment } from "../lib/types";
 import { ArrowDown, Trash2 } from "lucide-react";
@@ -16,6 +17,11 @@ interface ChatViewProps {
   sessionSummary?: string | null;
   sessionName?: string | null;
   isReadOnly?: boolean;
+  activeSessionKind?: "conversation" | "setup" | null;
+  selectedSources?: string[];
+  onAddSource?: (sourceId: string) => void | Promise<void>;
+  onRequestSourceSetup?: (sourceId: string) => void | Promise<void>;
+  onRemoveSource?: (sourceId: string) => void | Promise<void>;
 }
 
 export function ChatView({
@@ -27,6 +33,11 @@ export function ChatView({
   sessionSummary,
   sessionName,
   isReadOnly,
+  activeSessionKind,
+  selectedSources = [],
+  onAddSource,
+  onRequestSourceSetup,
+  onRemoveSource,
 }: ChatViewProps) {
   const { containerRef, isAtBottom, scrollToBottom } = useAutoScroll([
     messages,
@@ -73,6 +84,14 @@ export function ChatView({
       </div>
       {sessionSummary && sessionName && (
         <SessionSummaryBlock summary={sessionSummary} sessionName={sessionName} />
+      )}
+      {activeSessionKind === "setup" && (
+        <SetupSourcesStatusPanel
+          selectedSources={selectedSources}
+          onAddSource={onAddSource}
+          onRequestSourceSetup={onRequestSourceSetup}
+          onRemoveSource={onRemoveSource}
+        />
       )}
       <div ref={containerRef} className="flex-1 overflow-y-auto relative">
         <MessageList messages={messages} isStreaming={isStreaming} onAction={onSend} />
