@@ -122,6 +122,8 @@ pub fn run() {
             get_subject_name,
             validate_api_key,
             cmd_perform_restart,
+            cmd_open_icloud_settings,
+            cmd_open_finder_iphone,
             cmd_debug_log,
         ])
         .run(tauri::generate_context!())

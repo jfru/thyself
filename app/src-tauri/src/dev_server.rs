@@ -75,6 +75,8 @@ pub async fn start_dev_server() {
         .route("/api/cmd_update_profile", post(handle_update_profile))
         .route("/api/get_subject_name", get(handle_get_subject_name))
         .route("/api/validate_api_key", post(handle_validate_api_key))
+        .route("/api/cmd_open_icloud_settings", post(handle_open_icloud_settings))
+        .route("/api/cmd_open_finder_iphone", post(handle_open_finder_iphone))
         .layer(cors)
         .with_state(state);
 
@@ -680,4 +682,14 @@ async fn handle_debug_log(Json(body): Json<DebugLogReq>) -> impl IntoResponse {
     StatusCode::OK
 }
 // #endregion
+
+async fn handle_open_icloud_settings() -> impl IntoResponse {
+    crate::onboarding_tools::perform_open_icloud_settings();
+    Json(json!({"status": "opened"}))
+}
+
+async fn handle_open_finder_iphone() -> impl IntoResponse {
+    crate::onboarding_tools::perform_open_finder_iphone();
+    Json(json!({"status": "opened"}))
+}
 

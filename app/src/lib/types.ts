@@ -43,9 +43,16 @@ export interface ToolUseBlock {
 
 export type ContentBlock = ThinkingBlock | TextBlock | ToolUseBlock;
 
+export interface ImageAttachment {
+  data: string; // base64-encoded
+  mediaType: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+  name: string;
+}
+
 export interface UserMessage {
   role: "user";
   content: string;
+  images?: ImageAttachment[];
   timestamp: number;
 }
 

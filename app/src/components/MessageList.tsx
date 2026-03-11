@@ -78,11 +78,13 @@ export function MessageList({ messages, isStreaming, onAction }: MessageListProp
         }
 
         if (msg.role === "user") {
+          const um = msg as UserMessageType;
           return (
             <UserMessage
               key={`msg-${i}`}
-              content={(msg as UserMessageType).content}
-              timestamp={(msg as UserMessageType).timestamp}
+              content={um.content}
+              images={um.images}
+              timestamp={um.timestamp}
             />
           );
         }

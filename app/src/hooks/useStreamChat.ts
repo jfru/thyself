@@ -6,6 +6,8 @@ import type {
   ContentBlock,
   TextBlock,
   WebSearchResult,
+  ImageAttachment,
+  UserMessage,
 } from "../lib/types";
 import { buildSystemPrompt, buildOnboardingPrompt } from "../lib/systemPrompt";
 
@@ -26,12 +28,13 @@ export function useStreamChat(sessionIdRef: React.RefObject<string | null>, opts
   const indexMapRef = useRef<Map<number, number>>(new Map());
 
   const sendMessage = useCallback(
-    async (userText: string) => {
+    async (userText: string, images?: ImageAttachment[]) => {
       if (isStreaming) return;
 
-      const userMsg: Message = {
+      const userMsg: UserMessage = {
         role: "user",
         content: userText,
+        ...(images?.length ? { images } : {}),
         timestamp: Date.now(),
       };
 
@@ -261,7 +264,20 @@ export function useStreamChat(sessionIdRef: React.RefObject<string | null>, opts
         .filter((m) => m.role !== "system")
         .map((m) => {
           if (m.role === "user") {
-            return { role: "user", content: m.content };
+            const um = m as UserMessage;
+            if (um.images?.length) {
+              const parts: unknown[] = um.images.map((img) => ({
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: img.mediaType,
+                  data: img.data,
+                },
+              }));
+              if (um.content) parts.push({ type: "text", text: um.content });
+              return { role: "user", content: parts };
+            }
+            return { role: "user", content: um.content };
           }
           const am = m as AssistantMessage;
           const content = am.blocks
