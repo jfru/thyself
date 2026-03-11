@@ -150,6 +150,147 @@ pub async fn cmd_update_profile(
 }
 
 #[tauri::command]
+pub async fn cmd_remove_data_source(
+    state: State<'_, DbState>,
+    profile_id: String,
+    source_id: String,
+) -> Result<Value, String> {
+    let mut profiles_list = profiles::read_profiles()?;
+    let profile = profiles_list
+        .iter_mut()
+        .find(|p| p.id == profile_id)
+        .ok_or_else(|| format!("Profile not found: {}", profile_id))?;
+
+    if !profile.selected_sources.iter().any(|s| s == &source_id) {
+        return Ok(json!({
+            "status": "ok",
+            "sourceId": source_id,
+            "deleted": {
+                "messages": 0,
+                "conversations": 0,
+                "gmail_messages": 0,
+                "chatgpt_messages": 0,
+                "chatgpt_conversations": 0,
+                "sync_runs": 0
+            },
+            "selectedSources": profile.selected_sources
+        }));
+    }
+
+    let guard = state.conn.lock().map_err(|e| e.to_string())?;
+    let conn = guard
+        .as_ref()
+        .ok_or_else(|| "No database available. Please complete onboarding first.".to_string())?;
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|e| format!("Failed to start transaction: {}", e))?;
+
+    let mut deleted_messages = 0usize;
+    let mut deleted_conversations = 0usize;
+    let mut deleted_gmail = 0usize;
+    let mut deleted_chatgpt_messages = 0usize;
+    let mut deleted_chatgpt_conversations = 0usize;
+    let mut deleted_sync_runs = 0usize;
+
+    match source_id.as_str() {
+        "imessage" => {
+            deleted_messages = tx
+                .execute("DELETE FROM messages WHERE source = 'imessage'", [])
+                .map_err(|e| format!("Failed deleting iMessage messages: {}", e))?;
+            deleted_conversations = tx
+                .execute("DELETE FROM conversations WHERE source = 'imessage'", [])
+                .map_err(|e| format!("Failed deleting iMessage conversations: {}", e))?;
+            deleted_sync_runs = tx
+                .execute("DELETE FROM sync_runs WHERE source = 'imessage'", [])
+                .map_err(|e| format!("Failed deleting iMessage sync runs: {}", e))?;
+        }
+        "whatsapp" => {
+            deleted_messages = tx
+                .execute("DELETE FROM messages WHERE source = 'whatsapp'", [])
+                .map_err(|e| format!("Failed deleting WhatsApp messages: {}", e))?;
+            deleted_conversations = tx
+                .execute("DELETE FROM conversations WHERE source = 'whatsapp'", [])
+                .map_err(|e| format!("Failed deleting WhatsApp conversations: {}", e))?;
+            deleted_sync_runs = tx
+                .execute(
+                    "DELETE FROM sync_runs WHERE source IN ('whatsapp_desktop', 'whatsapp_web')",
+                    [],
+                )
+                .map_err(|e| format!("Failed deleting WhatsApp sync runs: {}", e))?;
+        }
+        "gmail" => {
+            deleted_gmail = tx
+                .execute("DELETE FROM gmail_messages", [])
+                .map_err(|e| format!("Failed deleting Gmail messages: {}", e))?;
+            deleted_sync_runs = tx
+                .execute("DELETE FROM sync_runs WHERE source = 'gmail'", [])
+                .map_err(|e| format!("Failed deleting Gmail sync runs: {}", e))?;
+        }
+        "chatgpt" => {
+            deleted_chatgpt_messages = tx
+                .execute("DELETE FROM chatgpt_messages", [])
+                .map_err(|e| format!("Failed deleting ChatGPT messages: {}", e))?;
+            deleted_chatgpt_conversations = tx
+                .execute("DELETE FROM chatgpt_conversations", [])
+                .map_err(|e| format!("Failed deleting ChatGPT conversations: {}", e))?;
+            deleted_sync_runs = tx
+                .execute("DELETE FROM sync_runs WHERE source = 'chatgpt'", [])
+                .map_err(|e| format!("Failed deleting ChatGPT sync runs: {}", e))?;
+        }
+        _ => return Err(format!("Unsupported source_id: {}", source_id)),
+    }
+
+    // Clean up dependent rows after conversation deletions.
+    tx.execute(
+        "DELETE FROM conversation_participants
+         WHERE conversation_id NOT IN (SELECT id FROM conversations)",
+        [],
+    )
+    .map_err(|e| format!("Failed cleaning conversation_participants: {}", e))?;
+
+    tx.execute(
+        "DELETE FROM messages
+         WHERE conversation_id IS NOT NULL
+           AND conversation_id NOT IN (SELECT id FROM conversations)",
+        [],
+    )
+    .map_err(|e| format!("Failed cleaning dangling messages: {}", e))?;
+
+    tx.commit()
+        .map_err(|e| format!("Failed committing data source removal: {}", e))?;
+
+    let next_sources: Vec<String> = profile
+        .selected_sources
+        .iter()
+        .filter(|s| *s != &source_id)
+        .cloned()
+        .collect();
+    let updated_profile = profiles::update_profile(
+        &profile_id,
+        None,
+        Some(next_sources.clone()),
+        None,
+        None,
+        None,
+    )?;
+
+    Ok(json!({
+        "status": "ok",
+        "sourceId": source_id,
+        "deleted": {
+            "messages": deleted_messages,
+            "conversations": deleted_conversations,
+            "gmail_messages": deleted_gmail,
+            "chatgpt_messages": deleted_chatgpt_messages,
+            "chatgpt_conversations": deleted_chatgpt_conversations,
+            "sync_runs": deleted_sync_runs
+        },
+        "selectedSources": next_sources,
+        "profile": updated_profile
+    }))
+}
+
+#[tauri::command]
 pub async fn get_subject_name() -> Result<String, String> {
     Ok(profiles::get_active_subject_name())
 }
@@ -224,8 +365,8 @@ pub async fn list_files(dir: String, pattern: Option<String>) -> Result<Vec<Stri
 }
 
 #[tauri::command]
-pub async fn create_session(name: Option<String>) -> Result<Value, String> {
-    let session = sessions::create_session(name.as_deref())?;
+pub async fn create_session(name: Option<String>, kind: Option<String>) -> Result<Value, String> {
+    let session = sessions::create_session(name.as_deref(), kind.as_deref())?;
     Ok(serde_json::to_value(&session).map_err(|e| e.to_string())?)
 }
 
@@ -240,6 +381,7 @@ pub async fn list_sessions() -> Result<Value, String> {
                 "name": s.name,
                 "createdAt": s.created_at,
                 "status": s.status,
+                "kind": s.kind,
                 "summaryFile": s.summary_file,
             })
         })

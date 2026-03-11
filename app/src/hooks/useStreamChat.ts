@@ -104,10 +104,15 @@ export interface StreamChatOptions {
   subjectName?: string;
   onboardingStatus?: string;
   selectedSources?: string[];
+  activeSessionKind?: "conversation" | "setup" | null;
+}
+
+interface SendMessageOptions {
+  sessionKind?: "conversation" | "setup" | null;
 }
 
 export function useStreamChat(sessionIdRef: React.RefObject<string | null>, opts: StreamChatOptions = {}) {
-  const { subjectName, onboardingStatus, selectedSources } = opts;
+  const { subjectName, onboardingStatus, selectedSources, activeSessionKind } = opts;
   const [messages, setMessages] = useState<Message[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const unlistenRef = useRef<(() => void) | null>(null);
@@ -117,7 +122,7 @@ export function useStreamChat(sessionIdRef: React.RefObject<string | null>, opts
   const indexMapRef = useRef<Map<number, number>>(new Map());
 
   const sendMessage = useCallback(
-    async (userText: string, images?: ImageAttachment[]) => {
+    async (userText: string, images?: ImageAttachment[], options?: SendMessageOptions) => {
       if (isStreaming) return;
 
       const userMsg: UserMessage = {
@@ -376,13 +381,17 @@ export function useStreamChat(sessionIdRef: React.RefObject<string | null>, opts
       const apiMessages = mergeConsecutiveMessages(rawApiMessages);
 
       try {
-        const systemPrompt =
-          onboardingStatus === "pending" && selectedSources?.length
-            ? buildOnboardingPrompt(subjectName || "User", selectedSources)
-            : buildSystemPrompt(subjectName || "User", sessionIdRef.current ?? undefined);
+        const effectiveSessionKind = options?.sessionKind ?? activeSessionKind;
+        const shouldUseOnboardingPrompt =
+          onboardingStatus === "pending" &&
+          selectedSources?.length &&
+          effectiveSessionKind === "setup";
+        const systemPrompt = shouldUseOnboardingPrompt
+          ? buildOnboardingPrompt(subjectName || "User", selectedSources)
+          : buildSystemPrompt(subjectName || "User", sessionIdRef.current ?? undefined);
 
         // #region agent log
-        fetch('http://127.0.0.1:7709/ingest/d9149a58-da3e-4f10-b872-bd18ccc36ca6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'2ee486'},body:JSON.stringify({sessionId:'2ee486',location:'useStreamChat.ts:278',message:'system prompt selected',data:{isOnboarding: onboardingStatus === "pending" && (selectedSources?.length ?? 0) > 0, onboardingStatus, selectedSources, promptStart: systemPrompt.substring(0, 80)},timestamp:Date.now()})}).catch(()=>{});
+        fetch('http://127.0.0.1:7709/ingest/d9149a58-da3e-4f10-b872-bd18ccc36ca6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'2ee486'},body:JSON.stringify({sessionId:'2ee486',location:'useStreamChat.ts:278',message:'system prompt selected',data:{isOnboarding: shouldUseOnboardingPrompt, onboardingStatus, selectedSources, activeSessionKind: effectiveSessionKind, promptStart: systemPrompt.substring(0, 80)},timestamp:Date.now()})}).catch(()=>{});
         // #endregion
 
         unlistenRef.current = await streamChat(
@@ -408,7 +417,7 @@ export function useStreamChat(sessionIdRef: React.RefObject<string | null>, opts
         setIsStreaming(false);
       }
     },
-    [messages, isStreaming]
+    [messages, isStreaming, onboardingStatus, selectedSources, subjectName, activeSessionKind]
   );
 
   const stopStreaming = useCallback(() => {

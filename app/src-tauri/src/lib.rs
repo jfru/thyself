@@ -119,6 +119,7 @@ pub fn run() {
             cmd_delete_profile,
             get_active_profile,
             cmd_update_profile,
+            cmd_remove_data_source,
             get_subject_name,
             validate_api_key,
             cmd_perform_restart,
