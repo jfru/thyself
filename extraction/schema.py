@@ -313,6 +313,16 @@ MIGRATIONS = [
     """
     ALTER TABLE person_identities ADD COLUMN relationship_summary TEXT;
     """,
+    # Migration 2: Add source message ID tracking for attribution verification
+    """
+    ALTER TABLE extraction_relationships ADD COLUMN source_msg_ids TEXT;
+    """,
+    """
+    ALTER TABLE extraction_episodes ADD COLUMN source_msg_ids TEXT;
+    """,
+    """
+    ALTER TABLE extraction_people ADD COLUMN sample_msg_ids TEXT;
+    """,
 ]
 
 
