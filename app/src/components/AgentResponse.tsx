@@ -80,10 +80,6 @@ export function AgentResponse({ message }: AgentResponseProps) {
     ACTION_TOOL_NAMES.includes(block.name) &&
     block.status === "complete";
 
-  // Build render segments: walk blocks in order, grouping consecutive
-  // non-action tools into collapsible summaries while keeping action
-  // tools and text/thinking blocks at their original positions.
-  const segments: { type: "content"; block: ContentBlock; idx: number }[] | { type: "tool_group"; tools: ToolUseBlockType[] }[] = [];
   const renderSegments: (
     | { kind: "content"; block: ContentBlock; idx: number }
     | { kind: "action_tool"; block: ToolUseBlockType }
@@ -101,11 +97,13 @@ export function AgentResponse({ message }: AgentResponseProps) {
 
   for (let i = 0; i < blocks.length; i++) {
     const block = blocks[i];
-    if (isActionTool(block)) {
-      flushTools();
-      renderSegments.push({ kind: "action_tool", block });
-    } else if (block.type === "tool_use") {
-      pendingTools.push(block);
+    if (block.type === "tool_use") {
+      if (isActionTool(block)) {
+        flushTools();
+        renderSegments.push({ kind: "action_tool", block });
+      } else {
+        pendingTools.push(block);
+      }
     } else {
       flushTools();
       renderSegments.push({ kind: "content", block, idx: i });
