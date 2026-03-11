@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback, KeyboardEvent, DragEvent, ClipboardEvent } from "react";
 import { Send, Square, Image, X } from "lucide-react";
 import type { ImageAttachment } from "../lib/types";
+import { isTauri, pickImages } from "../lib/tauriBridge";
 
 const ACCEPTED_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20 MB
@@ -126,6 +127,16 @@ export function InputBox({ onSend, onStop, isStreaming }: InputBoxProps) {
     if (e.dataTransfer?.files.length) addFiles(e.dataTransfer.files);
   };
 
+  const handlePickImages = useCallback(async () => {
+    if (isStreaming) return;
+    if (isTauri()) {
+      const picked = await pickImages();
+      if (picked.length) setImages((prev) => [...prev, ...picked]);
+    } else {
+      fileInputRef.current?.click();
+    }
+  }, [isStreaming]);
+
   const hasContent = text.trim() || images.length > 0;
 
   return (
@@ -178,13 +189,14 @@ export function InputBox({ onSend, onStop, isStreaming }: InputBoxProps) {
 
           <div className="flex items-center gap-2 px-3 py-3">
             <button
-              onClick={() => fileInputRef.current?.click()}
+              onClick={handlePickImages}
               disabled={isStreaming}
               className="flex-shrink-0 rounded-lg p-1.5 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 disabled:opacity-30 transition-all"
               title="Attach image"
             >
               <Image size={18} />
             </button>
+            {/* Browser-only file input fallback (Tauri uses native dialog) */}
             <input
               ref={fileInputRef}
               type="file"

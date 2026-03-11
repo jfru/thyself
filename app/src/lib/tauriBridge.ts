@@ -45,6 +45,26 @@ export async function invokeCommand<T = unknown>(
   return res.json() as Promise<T>;
 }
 
+export { isTauri };
+
+import type { ImageAttachment } from "./types";
+
+/**
+ * Open a native file picker for images (Tauri only).
+ * Uses AppleScript to bypass NSOpenPanel issues in WKWebView.
+ */
+export async function pickImages(): Promise<ImageAttachment[]> {
+  if (!isTauri()) return [];
+
+  const { invoke } = await import("@tauri-apps/api/core");
+  try {
+    return await invoke<ImageAttachment[]>("pick_and_read_images");
+  } catch (err) {
+    console.error("pickImages failed:", err);
+    return [];
+  }
+}
+
 export interface StreamEventPayload {
   event_type: string;
   data: Record<string, unknown>;

@@ -578,6 +578,79 @@ pub fn cmd_open_finder_iphone() {
     onboarding_tools::perform_open_finder_iphone();
 }
 
+fn read_image_file(path: &str) -> Result<Value, String> {
+    use base64::Engine;
+
+    let data = fs::read(path).map_err(|e| format!("Failed to read {}: {}", path, e))?;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let media_type = match ext.as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        _ => return Err(format!("Unsupported image type: {}", ext)),
+    };
+
+    let name = std::path::Path::new(path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("image")
+        .to_string();
+
+    Ok(json!({
+        "data": b64,
+        "mediaType": media_type,
+        "name": name,
+    }))
+}
+
+#[tauri::command]
+pub async fn pick_and_read_images() -> Result<Value, String> {
+    let output = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(
+            r#"set theFiles to choose file of type {"public.image"} with multiple selections allowed
+set paths to ""
+repeat with f in theFiles
+    set paths to paths & (POSIX path of f) & linefeed
+end repeat
+return paths"#,
+        )
+        .output()
+        .map_err(|e| format!("Failed to run osascript: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("User canceled") || stderr.contains("-128") {
+            return Ok(json!([]));
+        }
+        return Err(format!("File picker failed: {}", stderr));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let paths: Vec<&str> = stdout
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .collect();
+
+    let mut images = Vec::new();
+    for path in paths {
+        match read_image_file(path) {
+            Ok(img) => images.push(img),
+            Err(e) => eprintln!("Skipping {}: {}", path, e),
+        }
+    }
+
+    Ok(Value::Array(images))
+}
+
 // #region agent log
 #[tauri::command]
 pub async fn cmd_debug_log(location: String, message: String, data: String) -> Result<(), String> {

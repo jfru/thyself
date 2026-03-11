@@ -125,6 +125,7 @@ pub fn run() {
             cmd_open_icloud_settings,
             cmd_open_finder_iphone,
             cmd_debug_log,
+            pick_and_read_images,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
