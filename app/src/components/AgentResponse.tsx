@@ -66,6 +66,7 @@ function ToolCallSummary({ tools, isStreaming: _isStreaming }: { tools: ToolUseB
 
 export function AgentResponse({ message }: AgentResponseProps) {
   const { blocks, isStreaming } = message;
+  const showImmediateThinking = isStreaming && blocks.length === 0;
 
   const lastBlock = blocks[blocks.length - 1];
   const showProcessing =
@@ -114,6 +115,13 @@ export function AgentResponse({ message }: AgentResponseProps) {
   return (
     <div className="flex justify-start">
       <div className="max-w-[90%] space-y-1">
+        {showImmediateThinking && (
+          <div className="flex items-center gap-2 py-2 text-xs text-zinc-500">
+            <Loader2 size={12} className="animate-spin" />
+            <span>Planning next moves...</span>
+          </div>
+        )}
+
         {renderSegments.map((seg, i) => {
           if (seg.kind === "content") {
             if (seg.block.type === "thinking") return <ThinkingBlock key={`c-${seg.idx}`} block={seg.block} />;
