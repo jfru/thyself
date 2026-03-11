@@ -31,6 +31,7 @@ class Message:
     recipient: str | None
     content: str
     meta: str | None = None  # conversation title, subject line, etc.
+    msg_id: str | None = None  # source-prefixed ID: #m(messages), #c(chatgpt), #g(gmail)
 
 
 def _is_junk(content: str | None) -> bool:
@@ -97,7 +98,7 @@ def fetch_imessage_whatsapp(
     """Fetch iMessage and WhatsApp messages for a month."""
     rows = conn.execute(
         """
-        SELECT m.sent_at, m.source, m.is_from_me, m.contact_id, m.content,
+        SELECT m.rowid, m.sent_at, m.source, m.is_from_me, m.contact_id, m.content,
                m.conversation_id
         FROM messages m
         WHERE strftime('%Y-%m', m.sent_at) = ?
@@ -108,7 +109,7 @@ def fetch_imessage_whatsapp(
     ).fetchall()
 
     messages = []
-    for sent_at, source, is_from_me, contact_id, content, conv_id in rows:
+    for rowid, sent_at, source, is_from_me, contact_id, content, conv_id in rows:
         if _is_junk(content):
             continue
         content = _clean_content(content)
@@ -131,6 +132,7 @@ def fetch_imessage_whatsapp(
             sender=sender,
             recipient=recipient,
             content=content,
+            msg_id=f"#m{rowid}",
         ))
     return messages
 
@@ -147,7 +149,7 @@ def fetch_chatgpt(conn: sqlite3.Connection, month: str) -> list[Message]:
 
     rows = conn.execute(
         """
-        SELECT datetime(cm.create_time, 'unixepoch') as ts,
+        SELECT cm.rowid, datetime(cm.create_time, 'unixepoch') as ts,
                cm.role, cm.text, cc.title
         FROM chatgpt_messages cm
         JOIN chatgpt_conversations cc ON cm.conversation_id = cc.id
@@ -160,7 +162,7 @@ def fetch_chatgpt(conn: sqlite3.Connection, month: str) -> list[Message]:
     ).fetchall()
 
     messages = []
-    for ts, role, text, title in rows:
+    for rowid, ts, role, text, title in rows:
         sender = SUBJECT_NAME if role == "user" else "ChatGPT"
         messages.append(Message(
             timestamp=ts,
@@ -169,6 +171,7 @@ def fetch_chatgpt(conn: sqlite3.Connection, month: str) -> list[Message]:
             recipient="ChatGPT" if role == "user" else SUBJECT_NAME,
             content=text,
             meta=title,
+            msg_id=f"#c{rowid}",
         ))
     return messages
 
@@ -177,7 +180,7 @@ def fetch_gmail(conn: sqlite3.Connection, month: str) -> list[Message]:
     """Fetch Gmail messages for a month."""
     rows = conn.execute(
         """
-        SELECT sent_at, is_from_me, from_name, from_addr, 
+        SELECT rowid, sent_at, is_from_me, from_name, from_addr, 
                to_addrs, subject, body_text
         FROM gmail_messages
         WHERE strftime('%Y-%m', sent_at) = ?
@@ -188,7 +191,7 @@ def fetch_gmail(conn: sqlite3.Connection, month: str) -> list[Message]:
     ).fetchall()
 
     messages = []
-    for sent_at, is_from_me, from_name, from_addr, to_addrs, subject, body_text in rows:
+    for rowid, sent_at, is_from_me, from_name, from_addr, to_addrs, subject, body_text in rows:
         if is_from_me:
             sender = SUBJECT_NAME
             try:
@@ -207,6 +210,7 @@ def fetch_gmail(conn: sqlite3.Connection, month: str) -> list[Message]:
             recipient=recipient,
             content=body_text,
             meta=subject,
+            msg_id=f"#g{rowid}",
         ))
     return messages
 
@@ -214,7 +218,8 @@ def fetch_gmail(conn: sqlite3.Connection, month: str) -> list[Message]:
 def format_message(msg: Message) -> str:
     """Format a single message for the chunk."""
     ts = msg.timestamp[:16] if msg.timestamp else "unknown"
-    header = f"[{ts} | {msg.source} | {msg.sender} → {msg.recipient}]"
+    id_prefix = f"{msg.msg_id} | " if msg.msg_id else ""
+    header = f"[{id_prefix}{ts} | {msg.source} | {msg.sender} → {msg.recipient}]"
     if msg.meta:
         header += f"  ({msg.meta})"
     return f"{header}\n{msg.content}"

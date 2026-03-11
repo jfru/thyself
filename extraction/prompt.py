@@ -98,6 +98,13 @@ What's conspicuously NOT being discussed:
 - **Be specific.** "{name} seems stressed" is useless. "{name} sends 4 terse one-word replies \
   to his dad over 3 days after a long email exchange about religion" is useful.
 - **Quote directly** when a message is particularly revealing. Short quotes only (1-2 sentences).
+- **Cite message IDs.** Every message in the input has a unique ID in its header (e.g. \
+  `#m12345`, `#c789`, `#g456`). When you quote or reference a specific message in \
+  `key_evidence`, `notable_exchanges`, `evidence`, or any other field, cite the message ID \
+  inline using `[#m12345]`. Example: `"Says 'I can't do this anymore' [#m12345]"`. This is \
+  mandatory for all direct quotes and strongly encouraged for paraphrased references. These \
+  IDs are used to verify attribution — if you attribute a quote to the wrong person, the \
+  citation will expose the error.
 - **Don't moralize.** You are an analyst, not a therapist. Describe patterns, don't prescribe.
 - **Flag uncertainty.** If you're inferring something, say so. If the data is ambiguous, \
   note both readings.
@@ -127,7 +134,8 @@ and a `months` array with one extraction per calendar month.
   "people": [
     {
       "canonical_name": "the single name you will use for this person everywhere in this output",
-      "aliases": ["other names, handles, or identifiers seen in the data for this person"]
+      "aliases": ["other names, handles, or identifiers seen in the data for this person"],
+      "sample_msg_ids": ["#m12345", "#m12500", "#m12600 — a few message IDs from this person's messages, for verification"]
     }
   ],
   "months": [
@@ -141,7 +149,7 @@ and a `months` array with one extraction per calendar month.
           "status": "new | ongoing | escalating | resolving | concluded",
           "people": ["names of people involved"],
           "emotional_tone": "description of emotional quality",
-          "key_evidence": ["direct quote or specific observation", "..."],
+          "key_evidence": ["direct quote or specific observation [#m12345]", "..."],
           "sources": ["which data sources this is visible in"]
         }
       ],
@@ -150,7 +158,7 @@ and a `months` array with one extraction per calendar month.
           "person": "name",
           "role": "how {name} relates to them",
           "quality_this_month": "description of relationship quality/dynamics",
-          "notable_exchanges": ["brief description of significant interactions"],
+          "notable_exchanges": ["brief description of significant interactions [#m12345]"],
           "sources": ["which data sources this relationship is visible in"]
         }
       ],
