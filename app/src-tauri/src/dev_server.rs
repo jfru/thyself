@@ -73,6 +73,7 @@ pub async fn start_dev_server() {
         .route("/api/cmd_delete_profile", post(handle_delete_profile))
         .route("/api/get_active_profile", get(handle_get_active_profile))
         .route("/api/cmd_update_profile", post(handle_update_profile))
+        .route("/api/cmd_remove_data_source", post(handle_remove_data_source))
         .route("/api/get_subject_name", get(handle_get_subject_name))
         .route("/api/validate_api_key", post(handle_validate_api_key))
         .route("/api/cmd_open_icloud_settings", post(handle_open_icloud_settings))
@@ -325,7 +326,12 @@ async fn handle_create_session(
         .and_then(|b| b.get("name"))
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
-    match sessions::create_session(name.as_deref()) {
+    let kind = body
+        .as_ref()
+        .and_then(|b| b.get("kind"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    match sessions::create_session(name.as_deref(), kind.as_deref()) {
         Ok(session) => (
             StatusCode::OK,
             Json(serde_json::to_value(&session).unwrap_or(json!({}))),
@@ -345,6 +351,7 @@ async fn handle_list_sessions() -> impl IntoResponse {
                         "name": s.name,
                         "createdAt": s.created_at,
                         "status": s.status,
+                        "kind": s.kind,
                         "summaryFile": s.summary_file,
                     })
                 })
@@ -621,6 +628,192 @@ async fn handle_update_profile(Json(body): Json<UpdateProfileReq>) -> impl IntoR
         Ok(profile) => (StatusCode::OK, Json(serde_json::to_value(&profile).unwrap_or(json!({})))),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e}))),
     }
+}
+
+#[derive(Deserialize)]
+struct RemoveDataSourceReq {
+    #[serde(rename = "profileId")]
+    profile_id: String,
+    #[serde(rename = "sourceId")]
+    source_id: String,
+}
+
+async fn handle_remove_data_source(
+    AxumState(state): AxumState<Arc<AppState>>,
+    Json(body): Json<RemoveDataSourceReq>,
+) -> impl IntoResponse {
+    let mut profiles_list = match profiles::read_profiles() {
+        Ok(p) => p,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e}))),
+    };
+    let profile = match profiles_list.iter_mut().find(|p| p.id == body.profile_id) {
+        Some(p) => p,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": format!("Profile not found: {}", body.profile_id)})),
+            )
+        }
+    };
+
+    let guard = state.db.conn.lock().unwrap();
+    let conn = match guard.as_ref() {
+        Some(c) => c,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({"error": "No database available"})),
+            )
+        }
+    };
+    let tx = match conn.unchecked_transaction() {
+        Ok(t) => t,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("Failed to start transaction: {}", e)})),
+            )
+        }
+    };
+
+    let mut deleted = json!({
+        "messages": 0,
+        "conversations": 0,
+        "gmail_messages": 0,
+        "chatgpt_messages": 0,
+        "chatgpt_conversations": 0,
+        "sync_runs": 0
+    });
+
+    let result = match body.source_id.as_str() {
+        "imessage" => {
+            let m = tx.execute("DELETE FROM messages WHERE source = 'imessage'", []);
+            let c = tx.execute("DELETE FROM conversations WHERE source = 'imessage'", []);
+            let s = tx.execute("DELETE FROM sync_runs WHERE source = 'imessage'", []);
+            match (m, c, s) {
+                (Ok(mm), Ok(cc), Ok(ss)) => {
+                    deleted["messages"] = json!(mm);
+                    deleted["conversations"] = json!(cc);
+                    deleted["sync_runs"] = json!(ss);
+                    Ok(())
+                }
+                _ => Err("Failed deleting iMessage data".to_string()),
+            }
+        }
+        "whatsapp" => {
+            let m = tx.execute("DELETE FROM messages WHERE source = 'whatsapp'", []);
+            let c = tx.execute("DELETE FROM conversations WHERE source = 'whatsapp'", []);
+            let s = tx.execute(
+                "DELETE FROM sync_runs WHERE source IN ('whatsapp_desktop', 'whatsapp_web')",
+                [],
+            );
+            match (m, c, s) {
+                (Ok(mm), Ok(cc), Ok(ss)) => {
+                    deleted["messages"] = json!(mm);
+                    deleted["conversations"] = json!(cc);
+                    deleted["sync_runs"] = json!(ss);
+                    Ok(())
+                }
+                _ => Err("Failed deleting WhatsApp data".to_string()),
+            }
+        }
+        "gmail" => {
+            let g = tx.execute("DELETE FROM gmail_messages", []);
+            let s = tx.execute("DELETE FROM sync_runs WHERE source = 'gmail'", []);
+            match (g, s) {
+                (Ok(gg), Ok(ss)) => {
+                    deleted["gmail_messages"] = json!(gg);
+                    deleted["sync_runs"] = json!(ss);
+                    Ok(())
+                }
+                _ => Err("Failed deleting Gmail data".to_string()),
+            }
+        }
+        "chatgpt" => {
+            let m = tx.execute("DELETE FROM chatgpt_messages", []);
+            let c = tx.execute("DELETE FROM chatgpt_conversations", []);
+            let s = tx.execute("DELETE FROM sync_runs WHERE source = 'chatgpt'", []);
+            match (m, c, s) {
+                (Ok(mm), Ok(cc), Ok(ss)) => {
+                    deleted["chatgpt_messages"] = json!(mm);
+                    deleted["chatgpt_conversations"] = json!(cc);
+                    deleted["sync_runs"] = json!(ss);
+                    Ok(())
+                }
+                _ => Err("Failed deleting ChatGPT data".to_string()),
+            }
+        }
+        _ => Err(format!("Unsupported source_id: {}", body.source_id)),
+    };
+
+    if let Err(e) = result {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": e})));
+    }
+
+    if tx
+        .execute(
+            "DELETE FROM conversation_participants
+             WHERE conversation_id NOT IN (SELECT id FROM conversations)",
+            [],
+        )
+        .is_err()
+    {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "Failed cleaning conversation participants"})),
+        );
+    }
+
+    if tx
+        .execute(
+            "DELETE FROM messages
+             WHERE conversation_id IS NOT NULL
+               AND conversation_id NOT IN (SELECT id FROM conversations)",
+            [],
+        )
+        .is_err()
+    {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "Failed cleaning dangling messages"})),
+        );
+    }
+
+    if let Err(e) = tx.commit() {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Failed to commit removal: {}", e)})),
+        );
+    }
+
+    let next_sources: Vec<String> = profile
+        .selected_sources
+        .iter()
+        .filter(|s| *s != &body.source_id)
+        .cloned()
+        .collect();
+    let updated = match profiles::update_profile(
+        &body.profile_id,
+        None,
+        Some(next_sources.clone()),
+        None,
+        None,
+        None,
+    ) {
+        Ok(p) => p,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e}))),
+    };
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "status": "ok",
+            "sourceId": body.source_id,
+            "deleted": deleted,
+            "selectedSources": next_sources,
+            "profile": updated,
+        })),
+    )
 }
 
 async fn handle_get_subject_name() -> impl IntoResponse {

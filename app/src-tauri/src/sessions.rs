@@ -11,10 +11,16 @@ pub struct SessionMeta {
     #[serde(rename = "createdAt")]
     pub created_at: String,
     pub status: String,
+    #[serde(default = "default_session_kind")]
+    pub kind: String,
     #[serde(rename = "summaryFile")]
     pub summary_file: Option<String>,
     #[serde(rename = "chatHistory")]
     pub chat_history: Value,
+}
+
+fn default_session_kind() -> String {
+    "conversation".to_string()
 }
 
 fn manifest_path() -> PathBuf {
@@ -42,8 +48,9 @@ fn write_manifest(sessions: &[SessionMeta]) -> Result<(), String> {
     fs::write(manifest_path(), data).map_err(|e| format!("Failed to write manifest: {}", e))
 }
 
-pub fn create_session(name: Option<&str>) -> Result<SessionMeta, String> {
+pub fn create_session(name: Option<&str>, kind: Option<&str>) -> Result<SessionMeta, String> {
     let mut manifest = read_manifest()?;
+    let session_kind = kind.unwrap_or("conversation");
 
     // #region agent log
     {
@@ -60,7 +67,10 @@ pub fn create_session(name: Option<&str>) -> Result<SessionMeta, String> {
     }
     // #endregion
 
-    if let Some(idx) = manifest.iter().position(|s| s.status == "active") {
+    if let Some(idx) = manifest
+        .iter()
+        .position(|s| s.status == "active" && s.kind == session_kind)
+    {
         if let Some(n) = name {
             if manifest[idx].name != n {
                 manifest[idx].name = n.to_string();
@@ -72,9 +82,16 @@ pub fn create_session(name: Option<&str>) -> Result<SessionMeta, String> {
 
     let session = SessionMeta {
         id: uuid::Uuid::new_v4().to_string(),
-        name: name.unwrap_or("Current Session").to_string(),
+        name: name
+            .unwrap_or(if session_kind == "setup" {
+                "Setup"
+            } else {
+                "Current Session"
+            })
+            .to_string(),
         created_at: chrono::Utc::now().to_rfc3339(),
         status: "active".to_string(),
+        kind: session_kind.to_string(),
         summary_file: None,
         chat_history: serde_json::json!([]),
     };
@@ -118,6 +135,7 @@ pub fn complete_session(
             name: title.to_string(),
             created_at: chrono::Utc::now().to_rfc3339(),
             status: "completed".to_string(),
+            kind: "conversation".to_string(),
             summary_file: Some(summary_file.to_string()),
             chat_history: serde_json::json!([]),
         });
