@@ -19,8 +19,11 @@ interface ChatViewProps {
   isReadOnly?: boolean;
   activeSessionKind?: "conversation" | "setup" | null;
   selectedSources?: string[];
-  onAddSource?: (sourceId: string) => void | Promise<void>;
-  onRequestSourceSetup?: (sourceId: string) => void | Promise<void>;
+  onAddSource?: (sourceId: string) => void | Promise<void | string[]>;
+  onRequestSourceSetup?: (
+    sourceId: string,
+    selectedSourcesOverride?: string[]
+  ) => void | Promise<void>;
   onRemoveSource?: (sourceId: string) => void | Promise<void>;
 }
 

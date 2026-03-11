@@ -128,6 +128,8 @@ export function buildOnboardingPrompt(
 ): string {
   const hasiMessage = selectedSources.includes("imessage");
   const hasWhatsApp = selectedSources.includes("whatsapp");
+  const hasGmail = selectedSources.includes("gmail");
+  const hasChatGPT = selectedSources.includes("chatgpt");
 
   const sourceList = selectedSources
     .map((s) => {
@@ -141,11 +143,19 @@ export function buildOnboardingPrompt(
 
   let prompt = `You are setting up Thyself for ${subjectName}. Your job is to guide them through importing their message history so Thyself can learn about their life. Be friendly, clear, and concise. Every step you ask the user to take must be verified by you using your tools — never just trust that they did it.
 
-${subjectName} selected these data sources: ${sourceList}
+${subjectName} currently has these selected data sources: ${sourceList}
+
+## Source Selection Rules (Critical)
+
+- Treat selected sources as a dynamic set, not a one-time choice.
+- The user may have selected one or many sources during initial onboarding.
+- The user can add more sources later from setup, and your latest source list is authoritative.
+- Never say "you selected only X" unless the current selected source list actually has exactly one source.
+- If the user asks to connect a source that is currently selected, proceed with that source's setup flow.
 
 ## Your Tools
 
-You have 10 onboarding tools. Use them at every step to verify progress:
+You have onboarding tools. Use them at every step to verify progress:
 
 - **scan_message_sources** — Scan for iMessage and WhatsApp databases on this Mac. Call this first, and re-call after permission changes.
 - **open_full_disk_access** — Opens System Settings directly to the Full Disk Access page. Use when scan returns "permission_denied".
@@ -160,9 +170,10 @@ You have 10 onboarding tools. Use them at every step to verify progress:
 - **extract_from_backup** — Extract WhatsApp databases from an encrypted iPhone backup.
 - **import_messages** — Import messages into Thyself from local databases or extracted backups.
 
-## Step 1: Scan and Ensure Permissions
+## Step 1: Scan and Ensure Permissions (iMessage/WhatsApp only)
 
-Call \`scan_message_sources\` immediately. **Before presenting any results**, check the status of each source.
+If iMessage or WhatsApp is selected, call \`scan_message_sources\` immediately. **Before presenting any results**, check the status of each source.
+If neither iMessage nor WhatsApp is selected, skip this step entirely.
 
 ### If the user says they restarted or granted permissions:
 Call \`scan_message_sources\` immediately — do NOT explain what you're doing first, just scan.
@@ -186,9 +197,9 @@ Present the results naturally:
 - "I found X messages in Y conversations on your Mac, going back to [earliest date]"
 - Report each source separately (iMessage and/or WhatsApp Desktop)
 
-## Step 2: Assess Completeness
+## Step 2: Assess Completeness (iMessage/WhatsApp only)
 
-For each source the user selected, ask:
+For each selected source that was scanned locally (iMessage/WhatsApp), ask:
 - "Is [earliest date] around when you started using [app]? Or do you have older messages that haven't synced to this Mac?"
 
 Their answer determines which path to take for each source.`;
@@ -285,11 +296,40 @@ WhatsApp Desktop only has messages since it was linked. For full history, we nee
    Report the results: "Imported X WhatsApp messages across Y conversations, going back to [date]."`;
   }
 
+  if (hasGmail) {
+    prompt += `
+
+## Gmail Import
+
+Use \`import_messages\` with source="gmail", method="local_sync".
+
+### Gmail flow
+1. Tell the user you'll connect Gmail now.
+2. Call \`import_messages\` with source="gmail", method="local_sync".
+3. If success: report imported message count/date range from the tool output.
+4. If the tool fails with authentication/credentials errors, tell the user they need to run Google ADC login in a terminal, then retry:
+   \`gcloud auth application-default login --scopes=https://www.googleapis.com/auth/gmail.readonly\`
+5. After they confirm login is complete, call \`import_messages\` again with source="gmail", method="local_sync".`;
+  }
+
+  if (hasChatGPT) {
+    prompt += `
+
+## ChatGPT Import
+
+ChatGPT onboarding import is not automated in this setup flow yet.
+
+If the user asks to connect ChatGPT:
+- Say clearly that ChatGPT import isn't wired into onboarding tools yet.
+- Offer to proceed with currently supported selected sources first.
+- Keep the response concise and do not claim ChatGPT is already connected unless verified by sync status.`;
+  }
+
   prompt += `
 
 ## Final Summary
 
-After all selected sources are imported, give a summary:
+After all selected sources that support setup are imported, give a summary:
 - Total messages imported per source
 - Date range covered per source
 - Number of conversations/contacts found

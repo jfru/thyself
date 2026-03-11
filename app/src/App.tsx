@@ -378,8 +378,8 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
   }, [clearMessages, refreshSidebar, setMessages]);
 
   const addSourceToProfile = useCallback(
-    async (sourceId: string) => {
-      if (selectedSources.includes(sourceId)) return;
+    async (sourceId: string): Promise<string[] | undefined> => {
+      if (selectedSources.includes(sourceId)) return selectedSources;
       const nextSources = [...selectedSources, sourceId];
       try {
         await invokeCommand<Profile>("cmd_update_profile", {
@@ -387,8 +387,10 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
           selectedSources: nextSources,
         });
         setSelectedSources(nextSources);
+        return nextSources;
       } catch (err) {
         console.error("Failed to add source to profile:", err);
+        return undefined;
       }
     },
     [profile.id, selectedSources]
@@ -416,7 +418,11 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
   );
 
   const handleSend = useCallback(
-    async (text: string, images?: ImageAttachment[]) => {
+    async (
+      text: string,
+      images?: ImageAttachment[],
+      options?: { selectedSourcesOverride?: string[] }
+    ) => {
       if (text === OPEN_SETUP_ACTION) {
         await openSetupSession();
         return;
@@ -465,7 +471,10 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
         }
       }
 
-      await sendMessage(text, images, { sessionKind: kind ?? "conversation" });
+      await sendMessage(text, images, {
+        sessionKind: kind ?? "conversation",
+        selectedSourcesOverride: options?.selectedSourcesOverride,
+      });
     },
     [
       activeSessionId,
@@ -481,7 +490,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
   );
 
   const requestSourceSetup = useCallback(
-    async (sourceId: string) => {
+    async (sourceId: string, selectedSourcesOverride?: string[]) => {
       const sourceLabels: Record<string, string> = {
         imessage: "iMessage",
         whatsapp: "WhatsApp",
@@ -489,7 +498,9 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
         chatgpt: "ChatGPT",
       };
       const label = sourceLabels[sourceId] || sourceId;
-      await handleSend(`Help me connect my ${label} data source.`);
+      await handleSend(`Help me connect my ${label} data source.`, undefined, {
+        selectedSourcesOverride,
+      });
     },
     [handleSend]
   );
@@ -500,13 +511,14 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
     prevStreamingRef.current = isStreaming;
 
     if (!justFinishedStreaming || !activeSessionId) return;
+    const currentSessionId = activeSessionId;
 
     async function persistAndRefreshSessionState() {
       // #region agent log
-      dlog('App.tsx:save-trigger', 'save triggered', {activeSessionId,messageCount:messages.length});
+      dlog('App.tsx:save-trigger', 'save triggered', {activeSessionId: currentSessionId,messageCount:messages.length});
       // #endregion
 
-      await saveCurrentMessages(activeSessionId, messages);
+      await saveCurrentMessages(currentSessionId, messages);
       refreshSidebar();
 
       // Pull latest session status immediately so completed summaries render
@@ -515,7 +527,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
         const result = await invokeCommand<{
           session: SessionMeta;
           summary: string | null;
-        }>("load_session", { sessionId: activeSessionId });
+        }>("load_session", { sessionId: currentSessionId });
         const { session, summary } = result;
         setSessionName(session.name);
         if (session.status === "completed") {

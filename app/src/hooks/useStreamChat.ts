@@ -109,6 +109,7 @@ export interface StreamChatOptions {
 
 interface SendMessageOptions {
   sessionKind?: "conversation" | "setup" | null;
+  selectedSourcesOverride?: string[];
 }
 
 export function useStreamChat(sessionIdRef: React.RefObject<string | null>, opts: StreamChatOptions = {}) {
@@ -382,12 +383,14 @@ export function useStreamChat(sessionIdRef: React.RefObject<string | null>, opts
 
       try {
         const effectiveSessionKind = options?.sessionKind ?? activeSessionKind;
+        const effectiveSelectedSources =
+          options?.selectedSourcesOverride ?? selectedSources ?? [];
         const shouldUseOnboardingPrompt =
           onboardingStatus === "pending" &&
-          selectedSources?.length &&
+          effectiveSelectedSources.length > 0 &&
           effectiveSessionKind === "setup";
         const systemPrompt = shouldUseOnboardingPrompt
-          ? buildOnboardingPrompt(subjectName || "User", selectedSources)
+          ? buildOnboardingPrompt(subjectName || "User", effectiveSelectedSources)
           : buildSystemPrompt(subjectName || "User", sessionIdRef.current ?? undefined);
 
         // #region agent log
