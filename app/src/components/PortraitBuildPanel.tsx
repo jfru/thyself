@@ -6,12 +6,6 @@ import {
   Loader2,
   AlertTriangle,
   X,
-  BookOpen,
-  Users,
-  TrendingUp,
-  Repeat,
-  Lightbulb,
-  User,
 } from "lucide-react";
 
 export interface PortraitRunStatus {
@@ -56,17 +50,6 @@ function formatElapsed(startedAt: string | null): string {
   const hours = Math.floor(minutes / 60);
   const remainMin = minutes % 60;
   return `${hours}h ${remainMin}m`;
-}
-
-function parseResultsSummary(
-  raw: string | null
-): Record<string, number> | null {
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
 }
 
 export function PortraitBuildPanel({
@@ -228,72 +211,44 @@ export function PortraitBuildPanel({
 }
 
 function CompletedPanel({ status }: { status: PortraitRunStatus }) {
-  const summary = parseResultsSummary(status.results_summary);
-
-  const items = summary
-    ? [
-        {
-          icon: BookOpen,
-          label: "Life chapters",
-          count: summary.life_chapters,
-        },
-        {
-          icon: Users,
-          label: "Relationship arcs",
-          count: summary.relationship_arcs,
-        },
-        {
-          icon: TrendingUp,
-          label: "Theme evolutions",
-          count: summary.theme_evolution,
-        },
-        {
-          icon: Repeat,
-          label: "Recurring patterns",
-          count: summary.recurring_patterns,
-        },
-        {
-          icon: Lightbulb,
-          label: "Turning points",
-          count: summary.turning_points,
-        },
-        { icon: User, label: "Person portrait", count: summary.person_portrait },
-      ].filter((item) => item.count && item.count > 0)
-    : [];
-
   return (
-    <div className="mx-4 mt-3 mb-1 rounded-xl border border-emerald-500/20 bg-zinc-900/80 overflow-hidden">
+    <div className="mx-4 mt-3 mb-1 rounded-xl border border-zinc-800 bg-zinc-900/80 overflow-hidden">
       <div className="px-4 py-3">
-        <div className="flex items-center gap-2 mb-2.5">
-          <div className="flex items-center justify-center w-5 h-5 rounded-full bg-emerald-500/20">
-            <Check size={10} className="text-emerald-400" />
-          </div>
-          <span className="text-xs font-medium text-emerald-400">
+        <div className="flex items-baseline gap-2 mb-3">
+          <span className="text-xs font-medium text-zinc-300">
             Portrait built
           </span>
           {status.extraction_months_covered && (
-            <span className="text-[11px] text-zinc-500 ml-auto">
-              {status.extraction_months_covered}
+            <span className="text-[11px] text-zinc-500">
+              — {status.extraction_months_covered}
             </span>
           )}
         </div>
 
-        {items.length > 0 && (
-          <div className="grid grid-cols-3 gap-2">
-            {items.map((item) => (
-              <div
-                key={item.label}
-                className="flex items-center gap-1.5 text-[11px] text-zinc-400"
-              >
-                <item.icon size={11} className="text-zinc-500 shrink-0" />
-                <span className="text-zinc-300 font-medium tabular-nums">
-                  {item.count}
-                </span>
-                <span className="truncate">{item.label}</span>
+        <div className="flex items-center gap-1">
+          {PHASES.map((phase, i) => {
+            const isLast = i === PHASES.length - 1;
+            return (
+              <div key={phase.key} className="flex items-center gap-1 flex-1">
+                <div className="flex flex-col items-center gap-1 flex-1">
+                  <div className={`flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-medium ${
+                    isLast ? "bg-emerald-500/20 text-emerald-400" : "bg-emerald-500/10 text-emerald-600"
+                  }`}>
+                    <Check size={10} />
+                  </div>
+                  <span className={`text-[10px] leading-tight text-center ${
+                    isLast ? "text-emerald-400/60" : "text-zinc-500"
+                  }`}>
+                    {phase.label}
+                  </span>
+                </div>
+                {i < PHASES.length - 1 && (
+                  <div className="h-px flex-1 mt-[-14px] bg-emerald-500/10" />
+                )}
               </div>
-            ))}
-          </div>
-        )}
+            );
+          })}
+        </div>
       </div>
     </div>
   );
