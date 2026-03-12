@@ -20,7 +20,7 @@ export async function invokeCommand<T = unknown>(
   const getCommands = new Set([
     "data_dir", "tool_defs", "get_data_dir_path", "get_tool_defs", "list_sessions",
     "get_sync_status", "sync_status", "list_profiles", "get_active_profile",
-    "get_subject_name",
+    "get_subject_name", "get_portrait_status",
   ]);
   const method = getCommands.has(cmd) ? "GET" : "POST";
 

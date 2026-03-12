@@ -287,11 +287,20 @@ function normalizeSetupMessages(messages: Message[]): Message[] {
   });
 }
 
+const LAST_SESSION_KEY = "thyself_last_session_id";
+
 function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: MainAppProps) {
   const sessionIdRef = useRef<string | null>(null);
   const [selectedSources, setSelectedSources] = useState<string[]>(profile.selected_sources);
   const [connectedSources, setConnectedSources] = useState<string[]>([]);
   const [activeSessionKind, setActiveSessionKind] = useState<"conversation" | "setup" | "portrait" | null>(null);
+  const [portraitStatus, setPortraitStatus] = useState<{
+    id: number; status: string; phase?: string; total_batches?: number | null;
+    completed_batches?: number | null; synthesis_batches?: number | null;
+    synthesis_completed?: number | null; error_message?: string | null;
+    started_at?: string | null; updated_at?: string | null; finished_at?: string | null;
+    extraction_months_covered?: string | null; results_summary?: string | null;
+  } | null>(null);
   const { messages, isStreaming, sendMessage, stopStreaming, clearMessages, setMessages } =
     useStreamChat(sessionIdRef, {
       subjectName: profile.subject_name,
@@ -299,9 +308,16 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
       selectedSources,
       connectedSources,
       activeSessionKind,
+      portraitStatus,
     });
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [activeSessionId, setActiveSessionIdRaw] = useState<string | null>(null);
+  const setActiveSessionId = useCallback((id: string | null) => {
+    setActiveSessionIdRaw(id);
+    if (id) {
+      try { localStorage.setItem(LAST_SESSION_KEY, id); } catch { /* ignore */ }
+    }
+  }, []);
   const [sessionSummary, setSessionSummary] = useState<string | null>(null);
   const [sessionName, setSessionName] = useState<string | null>(null);
   const [isReadOnly, setIsReadOnly] = useState(false);
@@ -310,6 +326,24 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
   const refreshSidebar = useCallback(() => {
     setSidebarRefreshKey((k) => k + 1);
   }, []);
+
+  const fetchPortraitStatus = useCallback(async () => {
+    try {
+      const result = await invokeCommand<typeof portraitStatus>("get_portrait_status");
+      setPortraitStatus(result);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchPortraitStatus();
+    const shouldPoll = activeSessionKind === "portrait" || portraitStatus?.status === "running";
+    const isTerminal = portraitStatus?.status === "completed" || portraitStatus?.status === "failed" || portraitStatus?.status === "cancelled" || portraitStatus?.status === "interrupted";
+    if (!shouldPoll || isTerminal) return;
+    const interval = setInterval(fetchPortraitStatus, 2000);
+    return () => clearInterval(interval);
+  }, [activeSessionKind, fetchPortraitStatus, portraitStatus?.status]);
 
   const hasImportedData = useCallback(async (): Promise<boolean> => {
     try {
@@ -387,34 +421,13 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
           } catch {
             // best effort
           }
-
-          const manifest = await invokeCommand<SessionMeta[]>("list_sessions");
-          const activeConversation = manifest.find(
-            (s) => s.status === "active" && (s.kind ?? "conversation") === "conversation"
-          );
-          if (activeConversation) {
-            setActiveSessionId(activeConversation.id);
-            setActiveSessionKind("conversation");
-            sessionIdRef.current = activeConversation.id;
-            const full = await invokeCommand<{ session: SessionMeta; summary: string | null }>(
-              "load_session",
-              { sessionId: activeConversation.id }
-            );
-            if (Array.isArray(full.session.chatHistory) && full.session.chatHistory.length > 0) {
-              setMessages(full.session.chatHistory);
-            } else if (profile.onboarding_status === "pending") {
-              const nudge = await makeConversationNudgeMessage();
-              setMessages([nudge]);
-            }
-            setSessionSummary(null);
-            setIsReadOnly(false);
-            return;
-          }
-
         }
 
         const manifest = await invokeCommand<SessionMeta[]>("list_sessions");
-        const active = manifest.find(
+        let savedId: string | null = null;
+        try { savedId = localStorage.getItem(LAST_SESSION_KEY); } catch { /* ignore */ }
+        const saved = savedId ? manifest.find((s) => s.id === savedId && s.status === "active") : null;
+        const active = saved ?? manifest.find(
           (s) => s.status === "active" && (s.kind ?? "conversation") === "conversation"
         );
         if (active) {
@@ -438,6 +451,10 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
           if (full.session.status === "completed") {
             setSessionSummary(full.summary);
             setIsReadOnly(true);
+          }
+          if (active.kind === "portrait") {
+            const status = await getSourceConnectionStatus();
+            setConnectedSources(status.connected.filter(s => selectedSources.includes(s)));
           }
         }
       } catch (err) {
@@ -541,11 +558,12 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
       sessionIdRef.current = session.id;
       setSessionName(session.name);
 
+      const status = await getSourceConnectionStatus();
+      setConnectedSources(status.connected.filter(s => selectedSources.includes(s)));
+
       if (session.chatHistory && Array.isArray(session.chatHistory) && session.chatHistory.length > 0) {
         setMessages(session.chatHistory);
       } else {
-        const status = await getSourceConnectionStatus();
-        setConnectedSources(status.connected);
         const nudge = await makeConversationNudgeMessage();
         setMessages([nudge]);
       }
@@ -878,6 +896,8 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
           onAddSource={addSourceToProfile}
           onRequestSourceSetup={requestSourceSetup}
           onRemoveSource={removeSourceFromProfile}
+          portraitStatus={portraitStatus as any}
+          onPortraitRefresh={fetchPortraitStatus}
         />
       </div>
     </div>

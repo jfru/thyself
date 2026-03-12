@@ -72,6 +72,7 @@ pub fn run() {
     let db_conn = db::open_db().expect("Failed to check for database");
     if let Some(ref conn) = db_conn {
         db::cleanup_stale_sync_runs(conn);
+        db::cleanup_stale_portrait_runs(conn);
     }
     let db_state = db::DbState {
         conn: std::sync::Mutex::new(db_conn),
@@ -133,6 +134,9 @@ pub fn run() {
             pick_files,
             pick_folder,
             read_dropped_files,
+            start_portrait_build,
+            cancel_portrait_build,
+            get_portrait_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
