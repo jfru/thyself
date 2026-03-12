@@ -134,26 +134,55 @@ interface MainAppProps {
 }
 
 const OPEN_SETUP_ACTION = "__OPEN_SETUP__";
-const CONTINUE_SETUP_MESSAGE = "I'm ready to continue with the setup.";
+const OPEN_PORTRAIT_ACTION = "__OPEN_PORTRAIT__";
+const CONTINUE_SETUP_MESSAGE = "I'm ready to continue connecting my data.";
 
-function makeSetupRedirectMessage(): SystemMessage {
-  return {
-    role: "system",
-    text: "No imported messages found yet. Open Setup to connect your data sources first.",
-    action: {
-      label: "Go to Setup",
-      message: OPEN_SETUP_ACTION,
-    },
-    timestamp: Date.now(),
-  };
+const ALL_SOURCES = ["imessage", "whatsapp", "gmail", "chatgpt"];
+
+const SOURCE_SYNC_KEYS: Record<string, string[]> = {
+  imessage: ["imessage"],
+  whatsapp: ["whatsapp_desktop", "whatsapp_web"],
+  gmail: ["gmail"],
+  chatgpt: ["chatgpt"],
+};
+
+interface SourceConnectionStatus {
+  connected: string[];
+  missing: string[];
+  total: number;
+}
+
+async function getSourceConnectionStatus(): Promise<SourceConnectionStatus> {
+  const connected: string[] = [];
+  const missing: string[] = [];
+  try {
+    const status = await invokeCommand<{
+      latest_by_source: Record<string, { status: string }>;
+    }>("get_sync_status");
+    const latest = status.latest_by_source ?? {};
+    for (const source of ALL_SOURCES) {
+      const keys = SOURCE_SYNC_KEYS[source] ?? [source];
+      const isConnected = keys.some(
+        (k) => latest[k] && latest[k].status === "completed"
+      );
+      if (isConnected) {
+        connected.push(source);
+      } else {
+        missing.push(source);
+      }
+    }
+  } catch {
+    missing.push(...ALL_SOURCES);
+  }
+  return { connected, missing, total: ALL_SOURCES.length };
 }
 
 function makeSetupContinueMessage(): SystemMessage {
   return {
     role: "system",
-    text: "Ready to continue connecting your message history?",
+    text: "Ready to continue connecting your data?",
     action: {
-      label: "Continue setup",
+      label: "Continue",
       message: CONTINUE_SETUP_MESSAGE,
     },
     timestamp: Date.now(),
@@ -172,13 +201,75 @@ function makeSetupStartMessage(): SystemMessage {
   };
 }
 
+function makeSourceNudgeMessage(status: SourceConnectionStatus): SystemMessage {
+  if (status.connected.length === 0) {
+    return {
+      role: "system",
+      text: "Connect your data sources to get started.",
+      action: {
+        label: "Connect Data",
+        message: OPEN_SETUP_ACTION,
+      },
+      timestamp: Date.now(),
+    };
+  }
+  return {
+    role: "system",
+    text: `You have ${status.connected.length} of ${status.total} data sources connected. Connecting more will give Thyself a richer understanding of your life.`,
+    action: {
+      label: "Connect more sources",
+      message: OPEN_SETUP_ACTION,
+    },
+    secondaryAction: {
+      label: "Build Your Portrait",
+      message: OPEN_PORTRAIT_ACTION,
+    },
+    timestamp: Date.now(),
+  };
+}
+
 function makeNoDataMessage(
-  sessionKind: "conversation" | "setup" | null
+  sessionKind: "conversation" | "setup" | "portrait" | null
 ): SystemMessage {
   if (sessionKind === "setup") {
     return makeSetupStartMessage();
   }
-  return makeSetupRedirectMessage();
+  return {
+    role: "system",
+    text: "Connect your data sources to get started.",
+    action: {
+      label: "Connect Data",
+      message: OPEN_SETUP_ACTION,
+    },
+    timestamp: Date.now(),
+  };
+}
+
+async function makeConversationNudgeMessage(): Promise<SystemMessage> {
+  const status = await getSourceConnectionStatus();
+  if (status.connected.length === 0) {
+    return {
+      role: "system",
+      text: "Connect your data sources to get started.",
+      action: {
+        label: "Connect Data",
+        message: OPEN_SETUP_ACTION,
+      },
+      timestamp: Date.now(),
+    };
+  }
+  if (status.missing.length > 0) {
+    return makeSourceNudgeMessage(status);
+  }
+  return {
+    role: "system",
+    text: "All your data sources are connected! Ready to build your portrait?",
+    action: {
+      label: "Build Your Portrait",
+      message: OPEN_PORTRAIT_ACTION,
+    },
+    timestamp: Date.now(),
+  };
 }
 
 function normalizeSetupMessages(messages: Message[]): Message[] {
@@ -187,9 +278,9 @@ function normalizeSetupMessages(messages: Message[]): Message[] {
     if (!msg.action || msg.action.message !== OPEN_SETUP_ACTION) return msg;
     return {
       ...msg,
-      text: "Ready to continue connecting your message history?",
+      text: "Ready to continue connecting your data?",
       action: {
-        label: "Continue setup",
+        label: "Continue",
         message: CONTINUE_SETUP_MESSAGE,
       },
     };
@@ -199,12 +290,14 @@ function normalizeSetupMessages(messages: Message[]): Message[] {
 function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: MainAppProps) {
   const sessionIdRef = useRef<string | null>(null);
   const [selectedSources, setSelectedSources] = useState<string[]>(profile.selected_sources);
-  const [activeSessionKind, setActiveSessionKind] = useState<"conversation" | "setup" | null>(null);
+  const [connectedSources, setConnectedSources] = useState<string[]>([]);
+  const [activeSessionKind, setActiveSessionKind] = useState<"conversation" | "setup" | "portrait" | null>(null);
   const { messages, isStreaming, sendMessage, stopStreaming, clearMessages, setMessages } =
     useStreamChat(sessionIdRef, {
       subjectName: profile.subject_name,
       onboardingStatus: profile.onboarding_status,
       selectedSources,
+      connectedSources,
       activeSessionKind,
     });
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -247,11 +340,11 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
             onboardingStarted.current = true;
 
             const session = await invokeCommand<SessionMeta>("create_session", {
-              name: "Setup",
+              name: "Connect Data",
               kind: "setup",
             });
             setActiveSessionId(session.id);
-            setActiveSessionKind((session.kind ?? "conversation") as "conversation" | "setup");
+            setActiveSessionKind((session.kind ?? "conversation") as "conversation" | "setup" | "portrait");
             sessionIdRef.current = session.id;
             refreshSidebar();
 
@@ -263,7 +356,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
                 role: "system",
                 text: "App restarted and ready to continue.",
                 action: {
-                  label: "Continue setup",
+                  label: "Continue",
                   message: CONTINUE_SETUP_MESSAGE,
                 },
                 timestamp: Date.now(),
@@ -284,6 +377,17 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
             return;
           }
 
+          // Ensure portrait session exists in sidebar when data is imported
+          try {
+            await invokeCommand<SessionMeta>("create_session", {
+              name: "Build Your Portrait",
+              kind: "portrait",
+            });
+            refreshSidebar();
+          } catch {
+            // best effort
+          }
+
           const manifest = await invokeCommand<SessionMeta[]>("list_sessions");
           const activeConversation = manifest.find(
             (s) => s.status === "active" && (s.kind ?? "conversation") === "conversation"
@@ -299,7 +403,8 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
             if (Array.isArray(full.session.chatHistory) && full.session.chatHistory.length > 0) {
               setMessages(full.session.chatHistory);
             } else if (profile.onboarding_status === "pending") {
-              setMessages([makeNoDataMessage("conversation")]);
+              const nudge = await makeConversationNudgeMessage();
+              setMessages([nudge]);
             }
             setSessionSummary(null);
             setIsReadOnly(false);
@@ -314,7 +419,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
         );
         if (active) {
           setActiveSessionId(active.id);
-          setActiveSessionKind((active.kind ?? "conversation") as "conversation" | "setup");
+          setActiveSessionKind((active.kind ?? "conversation") as "conversation" | "setup" | "portrait");
           sessionIdRef.current = active.id;
           const full = await invokeCommand<{ session: SessionMeta; summary: string | null }>(
             "load_session", { sessionId: active.id }
@@ -322,8 +427,13 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
           if (Array.isArray(full.session.chatHistory) && full.session.chatHistory.length > 0) {
             setMessages(full.session.chatHistory);
           } else if (profile.onboarding_status === "pending") {
-            const activeKind = (active.kind ?? "conversation") as "conversation" | "setup";
-            setMessages([makeNoDataMessage(activeKind)]);
+            const activeKind = (active.kind ?? "conversation") as "conversation" | "setup" | "portrait";
+            if (activeKind === "setup") {
+              setMessages([makeNoDataMessage(activeKind)]);
+            } else {
+              const nudge = await makeConversationNudgeMessage();
+              setMessages([nudge]);
+            }
           }
           if (full.session.status === "completed") {
             setSessionSummary(full.summary);
@@ -362,7 +472,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
   const openSetupSession = useCallback(async () => {
     try {
       const setup = await invokeCommand<SessionMeta>("create_session", {
-        name: "Setup",
+        name: "Connect Data",
         kind: "setup",
       });
       const result = await invokeCommand<{
@@ -372,7 +482,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
       const { session, summary } = result;
 
       setActiveSessionId(session.id);
-      setActiveSessionKind((session.kind ?? "conversation") as "conversation" | "setup");
+      setActiveSessionKind((session.kind ?? "conversation") as "conversation" | "setup" | "portrait");
       sessionIdRef.current = session.id;
       setSessionName(session.name);
 
@@ -413,6 +523,45 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
       console.error("Failed to open setup session:", err);
     }
   }, [clearMessages, refreshSidebar, setMessages]);
+
+  const openPortraitSession = useCallback(async () => {
+    try {
+      const portrait = await invokeCommand<SessionMeta>("create_session", {
+        name: "Build Your Portrait",
+        kind: "portrait",
+      });
+      const result = await invokeCommand<{
+        session: SessionMeta;
+        summary: string | null;
+      }>("load_session", { sessionId: portrait.id });
+      const { session, summary } = result;
+
+      setActiveSessionId(session.id);
+      setActiveSessionKind("portrait");
+      sessionIdRef.current = session.id;
+      setSessionName(session.name);
+
+      if (session.chatHistory && Array.isArray(session.chatHistory) && session.chatHistory.length > 0) {
+        setMessages(session.chatHistory);
+      } else {
+        const status = await getSourceConnectionStatus();
+        setConnectedSources(status.connected);
+        const nudge = await makeConversationNudgeMessage();
+        setMessages([nudge]);
+      }
+
+      if (session.status === "completed") {
+        setSessionSummary(summary);
+        setIsReadOnly(true);
+      } else {
+        setSessionSummary(null);
+        setIsReadOnly(false);
+      }
+      refreshSidebar();
+    } catch (err) {
+      console.error("Failed to open portrait session:", err);
+    }
+  }, [refreshSidebar, selectedSources, setMessages]);
 
   const addSourceToProfile = useCallback(
     async (sourceId: string): Promise<string[] | undefined> => {
@@ -466,6 +615,21 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
         return;
       }
 
+      if (text === OPEN_PORTRAIT_ACTION) {
+        if (activeSessionKind !== "portrait") {
+          await openPortraitSession();
+        }
+        await sendMessage("Let's build my portrait.", undefined, {
+          sessionKind: "portrait",
+        });
+        return;
+      }
+
+      if (text === "__DISMISS_NUDGE__") {
+        setMessages((prev) => prev.filter((m) => m.role !== "system"));
+        return;
+      }
+
       if (isReadOnly) return;
 
       let sid = activeSessionId;
@@ -487,25 +651,21 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
         }
       }
 
-      // In conversation mode, don't run onboarding prompt unless there's
-      // actually no imported data yet. Route user to Setup in that case.
       if (
         profile.onboarding_status === "pending" &&
         (kind ?? "conversation") === "conversation"
       ) {
-        const hasData = await hasImportedData();
-        if (!hasData) {
-          const setupMsg: SystemMessage = {
-            role: "system",
-            text: "No imported messages found yet. Open Setup to connect your data sources first.",
-            action: {
-              label: "Go to Setup",
-              message: OPEN_SETUP_ACTION,
-            },
-            timestamp: Date.now(),
-          };
-          setMessages((prev) => [...prev, setupMsg]);
+        const status = await getSourceConnectionStatus();
+        if (status.connected.length === 0) {
+          setMessages((prev) => [...prev, makeSourceNudgeMessage(status)]);
           return;
+        }
+        if (status.missing.length > 0) {
+          const hasData = await hasImportedData();
+          if (!hasData) {
+            setMessages((prev) => [...prev, makeSourceNudgeMessage(status)]);
+            return;
+          }
         }
       }
 
@@ -520,6 +680,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
       hasImportedData,
       isReadOnly,
       openSetupSession,
+      openPortraitSession,
       profile.onboarding_status,
       refreshSidebar,
       sendMessage,
@@ -590,10 +751,30 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
       } catch (err) {
         console.error("Failed to refresh active session state:", err);
       }
+
+      if (activeSessionKind === "setup") {
+        try {
+          const status = await getSourceConnectionStatus();
+          if (status.connected.length > 0 && status.missing.length === 0) {
+            const portraitCta: SystemMessage = {
+              role: "system",
+              text: "All your data sources are connected! Ready to build your portrait?",
+              action: {
+                label: "Build Your Portrait",
+                message: OPEN_PORTRAIT_ACTION,
+              },
+              timestamp: Date.now(),
+            };
+            setMessages((prev) => [...prev, portraitCta]);
+          }
+        } catch {
+          // best effort
+        }
+      }
     }
 
     void persistAndRefreshSessionState();
-  }, [isStreaming, activeSessionId, messages, refreshSidebar, saveCurrentMessages]);
+  }, [isStreaming, activeSessionId, activeSessionKind, messages, refreshSidebar, saveCurrentMessages, setMessages]);
 
   const handleNewSession = useCallback(() => {
     clearMessages();
@@ -611,7 +792,12 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
       await saveCurrentMessages(activeSessionId, []);
     }
     if (profile.onboarding_status === "pending") {
-      setMessages([makeNoDataMessage(activeSessionKind)]);
+      if (activeSessionKind === "setup") {
+        setMessages([makeNoDataMessage(activeSessionKind)]);
+      } else {
+        const nudge = await makeConversationNudgeMessage();
+        setMessages([nudge]);
+      }
     }
   }, [clearMessages, activeSessionId, activeSessionKind, profile.onboarding_status, saveCurrentMessages, setMessages]);
 
@@ -626,12 +812,12 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
         const { session, summary } = result;
 
         setActiveSessionId(session.id);
-        setActiveSessionKind((session.kind ?? "conversation") as "conversation" | "setup");
+        setActiveSessionKind((session.kind ?? "conversation") as "conversation" | "setup" | "portrait");
         sessionIdRef.current = session.id;
         setSessionName(session.name);
 
         if (session.chatHistory && Array.isArray(session.chatHistory) && session.chatHistory.length > 0) {
-          const loadedKind = (session.kind ?? "conversation") as "conversation" | "setup";
+          const loadedKind = (session.kind ?? "conversation") as "conversation" | "setup" | "portrait";
           setMessages(
             loadedKind === "setup"
               ? normalizeSetupMessages(session.chatHistory)
@@ -639,9 +825,13 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
           );
         } else if (profile.onboarding_status === "pending") {
           clearMessages();
-          setMessages([
-            makeNoDataMessage((session.kind ?? "conversation") as "conversation" | "setup"),
-          ]);
+          const loadedKind = (session.kind ?? "conversation") as "conversation" | "setup" | "portrait";
+          if (loadedKind === "setup") {
+            setMessages([makeNoDataMessage(loadedKind)]);
+          } else {
+            const nudge = await makeConversationNudgeMessage();
+            setMessages([nudge]);
+          }
         }
 
         if (session.status === "completed") {

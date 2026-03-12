@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { invokeCommand } from "../lib/tauriBridge";
-import { Plus, MessageSquare, PanelLeftClose, PanelLeft, User, ChevronDown, Trash2, Settings } from "lucide-react";
+import { Plus, MessageSquare, PanelLeftClose, PanelLeft, User, ChevronDown, Trash2, Settings, Sparkles } from "lucide-react";
 import type { SessionMeta, Profile } from "../lib/types";
 
 interface SessionSidebarProps {
@@ -93,7 +93,9 @@ export function SessionSidebar({
   const conversationSessions = sessions.filter(
     (s) => (s.kind ?? "conversation") === "conversation"
   );
-  const setupSessions = sessions.filter((s) => (s.kind ?? "conversation") === "setup");
+  const setupSessions = sessions.filter(
+    (s) => (s.kind ?? "conversation") === "setup" || (s.kind ?? "conversation") === "portrait"
+  );
 
   if (collapsed) {
     return (
@@ -183,11 +185,15 @@ export function SessionSidebar({
 
             {setupSessions.length > 0 && (
               <div className="mt-3 px-4 py-1 text-[10px] uppercase tracking-wider text-zinc-600">
-                Setup & Data Sources
+                Getting Started
               </div>
             )}
             {setupSessions.map((session) => {
               const isActive = session.id === activeSessionId;
+              const isPortrait = session.kind === "portrait";
+              const Icon = isPortrait ? Sparkles : Settings;
+              const activeColor = isPortrait ? "text-amber-400" : "text-purple-400";
+              const inactiveColor = isPortrait ? "text-amber-500/70" : "text-purple-500/70";
               return (
                 <button
                   key={session.id}
@@ -198,10 +204,10 @@ export function SessionSidebar({
                       : "hover:bg-zinc-900 border-l-2 border-transparent"
                   }`}
                 >
-                  <Settings
+                  <Icon
                     size={14}
                     className={`mt-0.5 flex-shrink-0 ${
-                      isActive ? "text-purple-400" : "text-purple-500/70"
+                      isActive ? activeColor : inactiveColor
                     }`}
                   />
                   <div className="min-w-0">

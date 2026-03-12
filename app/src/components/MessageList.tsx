@@ -22,17 +22,30 @@ function SystemMessageBubble({
   showButton: boolean;
   onAction?: (msg: string) => void;
 }) {
+  const hasActions = showButton && (message.action || message.secondaryAction);
   return (
     <div className="flex justify-center py-6">
       <div className="bg-zinc-900/80 border border-zinc-800 rounded-xl px-5 py-4 max-w-sm text-center">
         <p className="text-sm text-zinc-300">{message.text}</p>
-        {showButton && message.action && (
-          <button
-            onClick={() => onAction?.(message.action!.message)}
-            className="mt-3 px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
-          >
-            {message.action.label}
-          </button>
+        {hasActions && (
+          <div className="mt-3 flex flex-col items-center gap-2">
+            {message.action && (
+              <button
+                onClick={() => onAction?.(message.action!.message)}
+                className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
+              >
+                {message.action.label}
+              </button>
+            )}
+            {message.secondaryAction && (
+              <button
+                onClick={() => onAction?.(message.secondaryAction!.message)}
+                className="px-4 py-1.5 text-sm text-zinc-400 hover:text-zinc-200 transition-colors"
+              >
+                {message.secondaryAction.label}
+              </button>
+            )}
+          </div>
         )}
       </div>
     </div>

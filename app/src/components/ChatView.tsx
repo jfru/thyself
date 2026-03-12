@@ -18,7 +18,7 @@ interface ChatViewProps {
   sessionSummary?: string | null;
   sessionName?: string | null;
   isReadOnly?: boolean;
-  activeSessionKind?: "conversation" | "setup" | null;
+  activeSessionKind?: "conversation" | "setup" | "portrait" | null;
   selectedSources?: string[];
   onAddSource?: (sourceId: string) => void | Promise<void | string[]>;
   onRequestSourceSetup?: (
