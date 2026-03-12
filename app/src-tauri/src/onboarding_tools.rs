@@ -1,8 +1,33 @@
 use crate::profiles;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
+
+static RUNNING_SYNCS: std::sync::LazyLock<Mutex<HashMap<String, u32>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Kill a running sync subprocess for the given source key (e.g. "gmail", "imessage").
+pub fn kill_sync_for_source(source: &str) {
+    let pid = {
+        let mut map = RUNNING_SYNCS.lock().unwrap();
+        map.remove(source)
+    };
+    if let Some(pid) = pid {
+        unsafe {
+            libc::kill(pid as i32, libc::SIGTERM);
+        }
+    }
+}
+
+/// Kill running syncs for any of the given source keys.
+pub fn kill_syncs_for_sources(sources: &[&str]) {
+    for s in sources {
+        kill_sync_for_source(s);
+    }
+}
 
 const APPLE_EPOCH_OFFSET: i64 = 978_307_200;
 const NANOSECONDS: i64 = 1_000_000_000;
@@ -302,6 +327,11 @@ pub async fn execute_onboarding_tool(
         "find_iphone_backups" => find_iphone_backups(),
         "monitor_iphone_backup" => monitor_iphone_backup(tool_input).await,
         "extract_from_backup" => extract_from_backup(tool_input).await,
+        "check_gmail_auth" => check_gmail_auth().await,
+        "authenticate_gmail" => authenticate_gmail().await,
+        "setup_gmail_auto" => setup_gmail_auto().await,
+        "find_downloaded_gmail_credential" => find_downloaded_gmail_credential().await,
+        "open_gmail_setup_url" => open_gmail_setup_url(tool_input),
         "import_messages" => import_messages(tool_input).await,
         _ => Err(format!("Unknown onboarding tool: {}", tool_name)),
     }
@@ -959,6 +989,81 @@ async fn extract_from_backup(tool_input: &Value) -> Result<Value, String> {
 }
 
 // ---------------------------------------------------------------------------
+// check_gmail_auth / authenticate_gmail
+// ---------------------------------------------------------------------------
+
+async fn run_gmail_auth_script(mode: &str) -> Result<Value, String> {
+    let project_root =
+        find_project_root().ok_or("Could not find project root (config.py not found)")?;
+
+    let script = project_root.join("sync/gmail_authenticate.py");
+    if !script.exists() {
+        return Err(format!(
+            "Gmail auth script not found: {}",
+            script.display()
+        ));
+    }
+
+    let data_dir = profiles::get_active_data_dir();
+
+    let output = tokio::process::Command::new("python3")
+        .arg("-u")
+        .arg(&script)
+        .arg(mode)
+        .env("THYSELF_DATA_DIR", data_dir.display().to_string())
+        .current_dir(&project_root)
+        .output()
+        .await
+        .map_err(|e| format!("Failed to run gmail auth script: {}", e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+
+    if let Ok(parsed) = serde_json::from_str::<Value>(&stdout) {
+        return Ok(parsed);
+    }
+
+    if output.status.success() {
+        Ok(json!({ "status": "ok", "output": stdout }))
+    } else {
+        let msg = if stderr.is_empty() { &stdout } else { &stderr };
+        Err(format!("Gmail auth failed: {}", msg))
+    }
+}
+
+async fn check_gmail_auth() -> Result<Value, String> {
+    run_gmail_auth_script("--check").await
+}
+
+async fn authenticate_gmail() -> Result<Value, String> {
+    run_gmail_auth_script("--auth").await
+}
+
+async fn setup_gmail_auto() -> Result<Value, String> {
+    run_gmail_auth_script("--setup-gcloud").await
+}
+
+async fn find_downloaded_gmail_credential() -> Result<Value, String> {
+    run_gmail_auth_script("--find-downloaded").await
+}
+
+fn open_gmail_setup_url(tool_input: &Value) -> Result<Value, String> {
+    let url = tool_input["url"]
+        .as_str()
+        .unwrap_or("https://console.cloud.google.com/apis/credentials");
+
+    std::process::Command::new("open")
+        .arg(url)
+        .spawn()
+        .map_err(|e| format!("Failed to open URL: {}", e))?;
+
+    Ok(json!({
+        "status": "opened",
+        "url": url,
+    }))
+}
+
+// ---------------------------------------------------------------------------
 // import_messages
 // ---------------------------------------------------------------------------
 
@@ -1023,6 +1128,10 @@ async fn import_messages(tool_input: &Value) -> Result<Value, String> {
         .spawn()
         .map_err(|e| format!("Failed to run {}: {}", script.display(), e))?;
 
+    if let Some(pid) = child.id() {
+        RUNNING_SYNCS.lock().unwrap().insert(source_key.clone(), pid);
+    }
+
     let stdout_pipe = child
         .stdout
         .take()
@@ -1073,6 +1182,9 @@ async fn import_messages(tool_input: &Value) -> Result<Value, String> {
         .wait()
         .await
         .map_err(|e| format!("Failed waiting for {}: {}", script.display(), e))?;
+
+    RUNNING_SYNCS.lock().unwrap().remove(&source_key);
+
     let stdout = stdout_task
         .await
         .map_err(|e| format!("Failed reading sync stdout: {}", e))?;
@@ -1248,6 +1360,56 @@ pub fn get_onboarding_tool_definitions() -> Vec<Value> {
                     }
                 },
                 "required": ["backup_path", "password"]
+            }
+        }),
+        json!({
+            "name": "check_gmail_auth",
+            "description": "Check whether Gmail is authenticated. Returns {status: 'authenticated', email: '...'} or {status: 'authenticated_adc', email: '...'} if credentials exist and are valid, {status: 'needs_auth'} if client credentials exist but the user hasn't signed in yet, or {status: 'needs_client_secret'} if no Gmail OAuth client credentials file exists. Always call this before import_messages with source='gmail'.",
+            "input_schema": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }),
+        json!({
+            "name": "authenticate_gmail",
+            "description": "Run the Gmail OAuth sign-in flow. Opens the user's web browser to Google's sign-in page where they grant Thyself read-only access to their email. The user completes sign-in in their browser; the tool returns once authentication is complete. Only call this when check_gmail_auth returns 'needs_auth'.",
+            "input_schema": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }),
+        json!({
+            "name": "setup_gmail_auto",
+            "description": "Automatically set up Gmail access using the gcloud CLI. Runs 'gcloud auth application-default login' with Gmail scopes, which opens the user's browser for Google sign-in. Returns {status: 'authenticated_adc', email: '...'} on success, or {status: 'gcloud_not_found'} if gcloud CLI is not installed. Only call when check_gmail_auth returns 'needs_client_secret' and gcloud.installed is true.",
+            "input_schema": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }),
+        json!({
+            "name": "find_downloaded_gmail_credential",
+            "description": "Search ~/Downloads for a recently downloaded Google OAuth client_secret*.json file and install it to the Thyself data directory. Returns {status: 'found_and_installed', source_path, installed_path} if found, or {status: 'not_found'}. Call this after guiding the user to download credentials from the Google Cloud Console.",
+            "input_schema": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }),
+        json!({
+            "name": "open_gmail_setup_url",
+            "description": "Open a specific URL in the user's default browser. Used to open Google Cloud Console pages during Gmail credential setup.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "The URL to open in the browser"
+                    }
+                },
+                "required": ["url"]
             }
         }),
         json!({

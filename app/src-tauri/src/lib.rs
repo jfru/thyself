@@ -70,6 +70,9 @@ pub fn run() {
 
     // DB connection is optional — may not exist yet if no profile is set up
     let db_conn = db::open_db().expect("Failed to check for database");
+    if let Some(ref conn) = db_conn {
+        db::cleanup_stale_sync_runs(conn);
+    }
     let db_state = db::DbState {
         conn: std::sync::Mutex::new(db_conn),
     };

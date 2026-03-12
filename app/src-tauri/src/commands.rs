@@ -90,6 +90,7 @@ pub async fn cmd_switch_profile(
     let profile = profiles::switch_profile(&profile_id)?;
 
     let new_conn = crate::db::open_db_for_profile(&profile.data_dir)?;
+    crate::db::cleanup_stale_sync_runs(&new_conn);
     let mut guard = state.conn.lock().map_err(|e| e.to_string())?;
     *guard = Some(new_conn);
 
@@ -175,6 +176,14 @@ pub async fn cmd_remove_data_source(
             },
             "selectedSources": profile.selected_sources
         }));
+    }
+
+    match source_id.as_str() {
+        "imessage" => onboarding_tools::kill_sync_for_source("imessage"),
+        "whatsapp" => onboarding_tools::kill_syncs_for_sources(&["whatsapp_desktop", "whatsapp_web"]),
+        "gmail" => onboarding_tools::kill_sync_for_source("gmail"),
+        "chatgpt" => onboarding_tools::kill_sync_for_source("chatgpt"),
+        _ => {}
     }
 
     let guard = state.conn.lock().map_err(|e| e.to_string())?;
