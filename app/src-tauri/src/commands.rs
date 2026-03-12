@@ -699,13 +699,35 @@ pub async fn get_sync_status(state: State<'_, DbState>) -> Result<Value, String>
         }));
     }
 
+    let has_progress_cols: bool = conn
+        .prepare("PRAGMA table_info(sync_runs)")
+        .ok()
+        .and_then(|mut stmt| {
+            let rows = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .ok()?;
+            let cols: Vec<String> = rows.filter_map(Result::ok).collect();
+            Some(
+                cols.iter().any(|c| c == "progress_processed")
+                    && cols.iter().any(|c| c == "progress_total"),
+            )
+        })
+        .unwrap_or(false);
+
+    let latest_sql = if has_progress_cols {
+        "SELECT source, started_at, finished_at, messages_added, status, error_message, last_message_at, progress_processed, progress_total
+         FROM sync_runs
+         WHERE id IN (SELECT MAX(id) FROM sync_runs GROUP BY source)
+         ORDER BY source"
+    } else {
+        "SELECT source, started_at, finished_at, messages_added, status, error_message, last_message_at, NULL AS progress_processed, NULL AS progress_total
+         FROM sync_runs
+         WHERE id IN (SELECT MAX(id) FROM sync_runs GROUP BY source)
+         ORDER BY source"
+    };
+
     let mut latest_stmt = conn
-        .prepare(
-            "SELECT source, started_at, finished_at, messages_added, status, error_message, last_message_at
-             FROM sync_runs
-             WHERE id IN (SELECT MAX(id) FROM sync_runs GROUP BY source)
-             ORDER BY source",
-        )
+        .prepare(latest_sql)
         .map_err(|e| format!("SQL error: {}", e))?;
 
     let latest_rows: Vec<Value> = latest_stmt
@@ -718,6 +740,8 @@ pub async fn get_sync_status(state: State<'_, DbState>) -> Result<Value, String>
                 "status": row.get::<_, String>(4)?,
                 "error_message": row.get::<_, Option<String>>(5)?,
                 "last_message_at": row.get::<_, Option<String>>(6)?,
+                "progress_processed": row.get::<_, Option<i64>>(7)?,
+                "progress_total": row.get::<_, Option<i64>>(8)?,
             }))
         })
         .map_err(|e| format!("Query error: {}", e))?
@@ -731,13 +755,20 @@ pub async fn get_sync_status(state: State<'_, DbState>) -> Result<Value, String>
         }
     }
 
+    let history_sql = if has_progress_cols {
+        "SELECT id, source, started_at, finished_at, messages_added, status, error_message, last_message_at, progress_processed, progress_total
+         FROM sync_runs
+         ORDER BY id DESC
+         LIMIT 100"
+    } else {
+        "SELECT id, source, started_at, finished_at, messages_added, status, error_message, last_message_at, NULL AS progress_processed, NULL AS progress_total
+         FROM sync_runs
+         ORDER BY id DESC
+         LIMIT 100"
+    };
+
     let mut history_stmt = conn
-        .prepare(
-            "SELECT id, source, started_at, finished_at, messages_added, status, error_message, last_message_at
-             FROM sync_runs
-             ORDER BY id DESC
-             LIMIT 100",
-        )
+        .prepare(history_sql)
         .map_err(|e| format!("SQL error: {}", e))?;
 
     let history: Vec<Value> = history_stmt
@@ -751,6 +782,8 @@ pub async fn get_sync_status(state: State<'_, DbState>) -> Result<Value, String>
                 "status": row.get::<_, String>(5)?,
                 "error_message": row.get::<_, Option<String>>(6)?,
                 "last_message_at": row.get::<_, Option<String>>(7)?,
+                "progress_processed": row.get::<_, Option<i64>>(8)?,
+                "progress_total": row.get::<_, Option<i64>>(9)?,
             }))
         })
         .map_err(|e| format!("Query error: {}", e))?

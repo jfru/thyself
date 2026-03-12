@@ -91,8 +91,12 @@ def get_last_synced_timestamp(thyself_conn):
         return 0
 
 
-def sync(thyself_db_path=None):
-    """Run incremental iMessage sync. Returns (messages_added, last_message_at)."""
+def sync(thyself_db_path=None, initial_sync=False):
+    """Run iMessage sync. Returns (messages_added, last_message_at).
+
+    initial_sync=True imports ALL messages (cutoff=0).
+    initial_sync=False imports only new messages since the last sync.
+    """
     db_path = str(thyself_db_path or DB_PATH)
 
     if not os.path.exists(IMESSAGE_DB):
@@ -118,10 +122,17 @@ def sync(thyself_db_path=None):
 
     contact_map = load_contact_map(thyself)
     conv_map = load_conversation_map(thyself)
-    last_ns = get_last_synced_timestamp(thyself)
 
-    # Overlap by 1 hour for safety
-    cutoff_ns = max(0, last_ns - (3600 * NANOSECONDS))
+    if initial_sync:
+        cutoff_ns = 0
+        print("  iMessage: running initial full sync (all messages)")
+    else:
+        last_ns = get_last_synced_timestamp(thyself)
+        cutoff_ns = max(0, last_ns - (3600 * NANOSECONDS))
+        if last_ns > 0:
+            print(f"  iMessage: incremental sync from last timestamp")
+        else:
+            print("  iMessage: no previous sync found, importing all")
 
     handle_cache = {}
     rows = imsg.execute("SELECT ROWID, id, service FROM handle").fetchall()
@@ -216,5 +227,15 @@ def sync(thyself_db_path=None):
 
 
 if __name__ == "__main__":
-    count, last = sync()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Run iMessage sync for Thyself")
+    parser.add_argument(
+        "--initial",
+        action="store_true",
+        help="Run an initial full sync (all messages, not incremental)",
+    )
+    args = parser.parse_args()
+
+    count, last = sync(initial_sync=args.initial)
     print(f"iMessage sync complete: {count} messages added, last at {last}")

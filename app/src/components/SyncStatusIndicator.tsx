@@ -20,9 +20,21 @@ export function SyncStatusIndicator() {
   const [showModal, setShowModal] = useState(false);
 
   useEffect(() => {
-    invokeCommand<SyncStatus>("get_sync_status")
-      .then(setSyncStatus)
-      .catch(() => {});
+    let alive = true;
+    const load = async () => {
+      try {
+        const status = await invokeCommand<SyncStatus>("get_sync_status");
+        if (alive) setSyncStatus(status);
+      } catch {
+        // best effort
+      }
+    };
+    load();
+    const interval = setInterval(load, 10000);
+    return () => {
+      alive = false;
+      clearInterval(interval);
+    };
   }, []);
 
   if (!syncStatus) return null;
@@ -66,7 +78,7 @@ export function SyncStatusIndicator() {
       >
         <span className={`w-1.5 h-1.5 rounded-full ${dotColor}`} />
         <span>
-          Last sync: {timeAgo(mostRecent?.started_at ?? null)}
+          {anyRunning ? "Syncing..." : "Last sync:"} {timeAgo(mostRecent?.started_at ?? null)}
           {totalMessages > 0 && ` — ${totalMessages} msgs`}
         </span>
         {failedSources.length > 0 && (

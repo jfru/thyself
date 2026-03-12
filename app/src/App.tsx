@@ -148,6 +148,54 @@ function makeSetupRedirectMessage(): SystemMessage {
   };
 }
 
+function makeSetupContinueMessage(): SystemMessage {
+  return {
+    role: "system",
+    text: "Ready to continue connecting your message history?",
+    action: {
+      label: "Continue setup",
+      message: CONTINUE_SETUP_MESSAGE,
+    },
+    timestamp: Date.now(),
+  };
+}
+
+function makeSetupStartMessage(): SystemMessage {
+  return {
+    role: "system",
+    text: "Ready to connect your message history?",
+    action: {
+      label: "Get started",
+      message: "Let's get my message history set up.",
+    },
+    timestamp: Date.now(),
+  };
+}
+
+function makeNoDataMessage(
+  sessionKind: "conversation" | "setup" | null
+): SystemMessage {
+  if (sessionKind === "setup") {
+    return makeSetupStartMessage();
+  }
+  return makeSetupRedirectMessage();
+}
+
+function normalizeSetupMessages(messages: Message[]): Message[] {
+  return messages.map((msg) => {
+    if (msg.role !== "system") return msg;
+    if (!msg.action || msg.action.message !== OPEN_SETUP_ACTION) return msg;
+    return {
+      ...msg,
+      text: "Ready to continue connecting your message history?",
+      action: {
+        label: "Continue setup",
+        message: CONTINUE_SETUP_MESSAGE,
+      },
+    };
+  });
+}
+
 function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: MainAppProps) {
   const sessionIdRef = useRef<string | null>(null);
   const [selectedSources, setSelectedSources] = useState<string[]>(profile.selected_sources);
@@ -210,6 +258,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
             const hasHistory =
               Array.isArray(session.chatHistory) && session.chatHistory.length > 0;
             if (hasHistory) {
+              const normalizedHistory = normalizeSetupMessages(session.chatHistory);
               const restartMsg: SystemMessage = {
                 role: "system",
                 text: "App restarted and ready to continue.",
@@ -219,7 +268,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
                 },
                 timestamp: Date.now(),
               };
-              setMessages([...session.chatHistory, restartMsg]);
+              setMessages([...normalizedHistory, restartMsg]);
             } else {
               const welcomeMsg: SystemMessage = {
                 role: "system",
@@ -249,11 +298,8 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
             );
             if (Array.isArray(full.session.chatHistory) && full.session.chatHistory.length > 0) {
               setMessages(full.session.chatHistory);
-            } else {
-              const hasData = await hasImportedData();
-              if (!hasData) {
-                setMessages([makeSetupRedirectMessage()]);
-              }
+            } else if (profile.onboarding_status === "pending") {
+              setMessages([makeNoDataMessage("conversation")]);
             }
             setSessionSummary(null);
             setIsReadOnly(false);
@@ -275,11 +321,9 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
           );
           if (Array.isArray(full.session.chatHistory) && full.session.chatHistory.length > 0) {
             setMessages(full.session.chatHistory);
-          } else {
-            const hasData = await hasImportedData();
-            if (!hasData) {
-              setMessages([makeSetupRedirectMessage()]);
-            }
+          } else if (profile.onboarding_status === "pending") {
+            const activeKind = (active.kind ?? "conversation") as "conversation" | "setup";
+            setMessages([makeNoDataMessage(activeKind)]);
           }
           if (full.session.status === "completed") {
             setSessionSummary(full.summary);
@@ -333,24 +377,17 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
       setSessionName(session.name);
 
       if (session.chatHistory && Array.isArray(session.chatHistory) && session.chatHistory.length > 0) {
-        const last = session.chatHistory[session.chatHistory.length - 1] as Message | undefined;
+        const normalizedHistory = normalizeSetupMessages(session.chatHistory);
+        const last = normalizedHistory[normalizedHistory.length - 1] as Message | undefined;
         const hasCtaAsLast =
           last &&
           last.role === "system" &&
           !!last.action &&
           last.action.message === CONTINUE_SETUP_MESSAGE;
 
-        const setupCta: SystemMessage = {
-          role: "system",
-          text: "Ready to continue connecting your message history?",
-          action: {
-            label: "Continue setup",
-            message: CONTINUE_SETUP_MESSAGE,
-          },
-          timestamp: Date.now(),
-        };
+        const setupCta = makeSetupContinueMessage();
 
-        setMessages(hasCtaAsLast ? session.chatHistory : [...session.chatHistory, setupCta]);
+        setMessages(hasCtaAsLast ? normalizedHistory : [...normalizedHistory, setupCta]);
       } else {
         const welcomeMsg: SystemMessage = {
           role: "system",
@@ -506,6 +543,18 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
   );
 
   const prevStreamingRef = useRef(isStreaming);
+
+  // Persist incrementally so refresh/crash during long tool runs
+  // (e.g. Gmail import) doesn't lose in-flight chat history.
+  useEffect(() => {
+    if (!activeSessionId) return;
+    const sessionId = activeSessionId;
+    const timer = window.setTimeout(() => {
+      void saveCurrentMessages(sessionId, messages);
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [activeSessionId, messages, saveCurrentMessages]);
+
   useEffect(() => {
     const justFinishedStreaming = prevStreamingRef.current && !isStreaming;
     prevStreamingRef.current = isStreaming;
@@ -560,11 +609,10 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
     if (activeSessionId) {
       await saveCurrentMessages(activeSessionId, []);
     }
-    const hasData = await hasImportedData();
-    if (!hasData) {
-      setMessages([makeSetupRedirectMessage()]);
+    if (profile.onboarding_status === "pending") {
+      setMessages([makeNoDataMessage(activeSessionKind)]);
     }
-  }, [clearMessages, activeSessionId, saveCurrentMessages, hasImportedData, setMessages]);
+  }, [clearMessages, activeSessionId, activeSessionKind, profile.onboarding_status, saveCurrentMessages, setMessages]);
 
   const handleLoadSession = useCallback(
     async (sessionId: string) => {
@@ -582,13 +630,17 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
         setSessionName(session.name);
 
         if (session.chatHistory && Array.isArray(session.chatHistory) && session.chatHistory.length > 0) {
-          setMessages(session.chatHistory);
-        } else {
+          const loadedKind = (session.kind ?? "conversation") as "conversation" | "setup";
+          setMessages(
+            loadedKind === "setup"
+              ? normalizeSetupMessages(session.chatHistory)
+              : session.chatHistory
+          );
+        } else if (profile.onboarding_status === "pending") {
           clearMessages();
-          const hasData = await hasImportedData();
-          if (!hasData) {
-            setMessages([makeSetupRedirectMessage()]);
-          }
+          setMessages([
+            makeNoDataMessage((session.kind ?? "conversation") as "conversation" | "setup"),
+          ]);
         }
 
         if (session.status === "completed") {
@@ -602,7 +654,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
         console.error("Failed to load session:", err);
       }
     },
-    [setMessages, clearMessages, hasImportedData]
+    [setMessages, clearMessages, profile.onboarding_status]
   );
 
   return (

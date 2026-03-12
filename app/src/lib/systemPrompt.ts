@@ -168,7 +168,7 @@ You have onboarding tools. Use them at every step to verify progress:
 - **find_iphone_backups** — List available iPhone backups with dates and encryption status.
 - **monitor_iphone_backup** — Poll backup directory to track backup progress. Returns status: in_progress/complete/not_started.
 - **extract_from_backup** — Extract WhatsApp databases from an encrypted iPhone backup.
-- **import_messages** — Import messages into Thyself from local databases or extracted backups.
+- **import_messages** — Import messages into Thyself. Use method="initial_sync" for first-time setup (imports ALL messages). Use method="local_sync" for later incremental syncs. Use method="backup_import" for WhatsApp iPhone backup.
 
 ## Step 1: Scan and Ensure Permissions (iMessage/WhatsApp only)
 
@@ -211,7 +211,7 @@ Their answer determines which path to take for each source.`;
 
 ### Path A: Local data is sufficient
 If the user confirms the earliest date matches when they started using iMessage:
-- Call \`import_messages\` with source="imessage", method="local_sync"
+- Call \`import_messages\` with source="imessage", method="initial_sync"
 - Report the results
 
 ### Path B: More history exists in iCloud (VERIFIED, MAC-SIDE)
@@ -234,7 +234,7 @@ If the user says they have older messages:
 
 5. Tell the user: "Now re-enable Messages in iCloud — go back to **iCloud → Messages** and toggle **'Use on this Mac'** back **ON**." Then call \`open_icloud_settings\` to give them the button.
 
-6. Call \`import_messages\` with source="imessage", method="local_sync"
+6. Call \`import_messages\` with source="imessage", method="initial_sync"
 7. Report the final results`;
   }
 
@@ -245,7 +245,7 @@ If the user says they have older messages:
 
 ### Path A: WhatsApp Desktop data is sufficient
 If the user is happy with the WhatsApp Desktop date range:
-- Call \`import_messages\` with source="whatsapp", method="local_sync"
+- Call \`import_messages\` with source="whatsapp", method="initial_sync"
 - Report the results
 
 ### Path B: Full WhatsApp history via iPhone backup (FULLY VERIFIED)
@@ -301,15 +301,16 @@ WhatsApp Desktop only has messages since it was linked. For full history, we nee
 
 ## Gmail Import
 
-Use \`import_messages\` with source="gmail", method="local_sync".
+Use \`import_messages\` with source="gmail", method="initial_sync" for first-time setup.
 
 ### Gmail flow
 1. Tell the user you'll connect Gmail now.
-2. Call \`import_messages\` with source="gmail", method="local_sync".
+2. Call \`import_messages\` with source="gmail", method="initial_sync".
 3. If success: report imported message count/date range from the tool output.
 4. If the tool fails with authentication/credentials errors, tell the user they need to run Google ADC login in a terminal, then retry:
    \`gcloud auth application-default login --scopes=https://www.googleapis.com/auth/gmail.readonly\`
-5. After they confirm login is complete, call \`import_messages\` again with source="gmail", method="local_sync".`;
+5. After they confirm login is complete, call \`import_messages\` again with source="gmail", method="initial_sync".
+6. For later "check for new emails" requests after initial setup, use \`import_messages\` with source="gmail", method="local_sync".`;
   }
 
   if (hasChatGPT) {
