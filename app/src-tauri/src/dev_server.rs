@@ -1,6 +1,7 @@
 use crate::claude::StreamEvent;
 use crate::commands::run_chat_loop;
 use crate::db::{self, get_data_dir, DbState};
+use crate::onboarding_tools;
 use crate::profiles;
 use crate::sessions;
 use crate::tools::get_tool_definitions;
@@ -682,6 +683,14 @@ async fn handle_remove_data_source(
             )
         }
     };
+
+    match body.source_id.as_str() {
+        "imessage" => onboarding_tools::kill_sync_for_source("imessage"),
+        "whatsapp" => onboarding_tools::kill_syncs_for_sources(&["whatsapp_desktop", "whatsapp_web"]),
+        "gmail" => onboarding_tools::kill_sync_for_source("gmail"),
+        "chatgpt" => onboarding_tools::kill_sync_for_source("chatgpt"),
+        _ => {}
+    }
 
     let guard = state.db.conn.lock().unwrap();
     let conn = match guard.as_ref() {

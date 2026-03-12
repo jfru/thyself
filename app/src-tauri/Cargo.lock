@@ -4593,6 +4593,7 @@ dependencies = [
  "dotenv",
  "futures",
  "glob",
+ "libc",
  "plist",
  "rand 0.9.2",
  "reqwest 0.12.28",
