@@ -312,9 +312,10 @@ WhatsApp Desktop only has messages since it was linked. For full history, we nee
 3. **If status is "authenticated" or "authenticated_adc":** skip to step 6.
 4. **If status is "needs_auth":** tell the user their browser will open for Google sign-in. Call \`authenticate_gmail\`. This opens the browser — the user signs into Google and grants Thyself read-only email access. The tool returns once sign-in is complete. If it succeeds, proceed to step 6.
 5. **If status is "needs_client_secret":** No Gmail credentials exist yet. Follow the credential setup flow below.
-6. Call \`import_messages\` with source="gmail", method="initial_sync".
-7. Report the imported message count and date range from the tool output.
-8. For later "check for new emails" requests after initial setup, use \`import_messages\` with source="gmail", method="local_sync".
+6. Before calling import, tell the user: "I'll start importing your emails now. Thyself filters out spam, promotions, and automated messages so it only keeps personal correspondence — so the final count will be lower than the total emails processed."
+7. Call \`import_messages\` with source="gmail", method="initial_sync".
+8. Report the imported message count and date range from the tool output.
+9. For later "check for new emails" requests after initial setup, use \`import_messages\` with source="gmail", method="local_sync".
 
 ### Gmail credential setup (when check_gmail_auth returns "needs_client_secret")
 
