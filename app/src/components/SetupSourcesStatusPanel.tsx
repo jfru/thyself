@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { invokeCommand } from "../lib/tauriBridge";
 import type { SyncRun, SyncStatus } from "../lib/types";
-import { BrainCircuit, CheckCircle2, Mail, MessageCircle, MessageSquareText, Plus, Trash2 } from "lucide-react";
+import { BrainCircuit, Mail, MessageCircle, MessageSquareText, Plus, Trash2 } from "lucide-react";
 
 interface SetupSourcesStatusPanelProps {
   selectedSources: string[];
@@ -37,9 +37,14 @@ function chooseLatestRun(runs: SyncRun[]): SyncRun | null {
   }, null);
 }
 
-function statusLabel(run: SyncRun | null, isSelected: boolean): { text: string; tone: string } {
+function statusLabel(
+  run: SyncRun | null,
+  isSelected: boolean
+): { text: string; tone: string } {
   if (!isSelected) return { text: "Not selected", tone: "text-zinc-500" };
-  if (!run || run.status === "failed") return { text: "Not connected", tone: "text-zinc-500" };
+  if (!run) return { text: "Not connected", tone: "text-zinc-500" };
+  if (run.status === "running") return { text: "Connecting...", tone: "text-amber-400" };
+  if (run.status === "failed") return { text: "Not connected", tone: "text-zinc-500" };
   return { text: "Connected", tone: "text-emerald-400" };
 }
 
@@ -66,7 +71,7 @@ export function SetupSourcesStatusPanel({
     };
 
     load();
-    const interval = setInterval(load, 15000);
+    const interval = setInterval(load, 2000);
     return () => {
       alive = false;
       clearInterval(interval);
@@ -83,7 +88,7 @@ export function SetupSourcesStatusPanel({
       <div className="mx-auto max-w-4xl">
         <div className="mb-2 flex items-center justify-between">
           <div className="text-[11px] uppercase tracking-wider text-zinc-500">
-            Data Sources
+            {selectedConfigs.length > 0 ? "Data Sources" : ""}
           </div>
           <div className="relative">
             <button
@@ -126,13 +131,20 @@ export function SetupSourcesStatusPanel({
               .filter(Boolean) as SyncRun[];
             const latest = chooseLatestRun(runs);
             const status = statusLabel(latest, true);
-            const isConnected = status.text === "Connected";
+            const progressText =
+              latest?.status === "running" &&
+              typeof latest.progress_processed === "number" &&
+              typeof latest.progress_total === "number" &&
+              latest.progress_total > 0
+                ? `${latest.progress_processed}/${latest.progress_total}`
+                : null;
+            const canStartSetup = status.text === "Not connected";
 
             return (
               <div
                 key={source.id}
                 onClick={async () => {
-                  if (!isConnected) {
+                  if (canStartSetup) {
                     await onRequestSourceSetup?.(source.id);
                   }
                 }}
@@ -158,12 +170,19 @@ export function SetupSourcesStatusPanel({
                   </button>
                 </div>
                 <div className="mt-1 flex items-center gap-1.5">
-                  {isConnected ? (
-                    <CheckCircle2 size={12} className="text-emerald-400" />
-                  ) : (
-                    <span className="inline-block h-2 w-2 rounded-full bg-zinc-500" />
-                  )}
+                  <span
+                    className={`inline-block h-2 w-2 rounded-full ${
+                      status.text === "Connected"
+                        ? "bg-emerald-400"
+                        : status.text === "Connecting..."
+                        ? "bg-amber-400 animate-pulse"
+                        : "bg-zinc-500"
+                    }`}
+                  />
                   <span className={`text-[11px] ${status.tone}`}>{status.text}</span>
+                  {progressText && (
+                    <span className="text-[11px] text-zinc-400">({progressText})</span>
+                  )}
                 </div>
               </div>
             );

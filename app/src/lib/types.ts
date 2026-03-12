@@ -132,6 +132,8 @@ export interface SyncRun {
   started_at: string | null;
   finished_at: string | null;
   messages_added: number;
+  progress_processed?: number | null;
+  progress_total?: number | null;
   status: string;
   error_message: string | null;
   last_message_at: string | null;

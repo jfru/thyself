@@ -2,6 +2,7 @@ use crate::profiles;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, BufReader};
 
 const APPLE_EPOCH_OFFSET: i64 = 978_307_200;
 const NANOSECONDS: i64 = 1_000_000_000;
@@ -126,20 +127,44 @@ fn ensure_sync_runs_table(conn: &rusqlite::Connection) -> Result<(), String> {
             started_at DATETIME NOT NULL,
             finished_at DATETIME,
             messages_added INTEGER DEFAULT 0,
+            progress_processed INTEGER DEFAULT 0,
+            progress_total INTEGER,
             status TEXT DEFAULT 'running',
             error_message TEXT,
             last_message_at DATETIME
         )",
     )
-    .map_err(|e| format!("Failed to ensure sync_runs table: {}", e))
+    .map_err(|e| format!("Failed to ensure sync_runs table: {}", e))?;
+
+    // Best-effort migration for existing databases.
+    let mut stmt = conn
+        .prepare("PRAGMA table_info(sync_runs)")
+        .map_err(|e| format!("Failed to inspect sync_runs schema: {}", e))?;
+    let cols: Vec<String> = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|e| format!("Failed to read sync_runs schema: {}", e))?
+        .filter_map(Result::ok)
+        .collect();
+
+    if !cols.iter().any(|c| c == "progress_processed") {
+        conn.execute("ALTER TABLE sync_runs ADD COLUMN progress_processed INTEGER DEFAULT 0", [])
+            .map_err(|e| format!("Failed to add progress_processed column: {}", e))?;
+    }
+    if !cols.iter().any(|c| c == "progress_total") {
+        conn.execute("ALTER TABLE sync_runs ADD COLUMN progress_total INTEGER", [])
+            .map_err(|e| format!("Failed to add progress_total column: {}", e))?;
+    }
+
+    Ok(())
 }
 
 fn sync_source_key(source: &str, method: &str) -> String {
     match (source, method) {
-        ("imessage", "local_sync") => "imessage".to_string(),
-        ("whatsapp", "local_sync") => "whatsapp_desktop".to_string(),
-        ("whatsapp", "backup_import") => "whatsapp_desktop".to_string(),
-        ("gmail", "local_sync") => "gmail".to_string(),
+        ("imessage", "local_sync") | ("imessage", "initial_sync") => "imessage".to_string(),
+        ("whatsapp", "local_sync") | ("whatsapp", "backup_import") | ("whatsapp", "initial_sync") => {
+            "whatsapp_desktop".to_string()
+        }
+        ("gmail", "local_sync") | ("gmail", "initial_sync") => "gmail".to_string(),
         _ => source.to_string(),
     }
 }
@@ -175,6 +200,17 @@ fn start_sync_run(db_path: &std::path::Path, source_key: &str) -> Result<i64, St
     let conn = rusqlite::Connection::open(db_path)
         .map_err(|e| format!("Failed to open DB for sync run start: {}", e))?;
     ensure_sync_runs_table(&conn)?;
+    // If a prior run for this source is still marked running, close it out so
+    // one source has a single canonical active run (prevents stale "running").
+    conn.execute(
+        "UPDATE sync_runs
+         SET finished_at = datetime('now'),
+             status = 'failed',
+             error_message = COALESCE(error_message, 'Superseded by a newer sync run')
+         WHERE source = ?1 AND status = 'running'",
+        [source_key],
+    )
+    .map_err(|e| format!("Failed to supersede existing running sync: {}", e))?;
     conn.execute(
         "INSERT INTO sync_runs (source, started_at, status) VALUES (?1, datetime('now'), 'running')",
         [source_key],
@@ -206,6 +242,48 @@ fn finish_sync_run(
     )
     .map_err(|e| format!("Failed to finish sync run: {}", e))?;
     Ok(())
+}
+
+fn update_sync_run_progress(
+    db_path: &std::path::Path,
+    run_id: i64,
+    processed: Option<i64>,
+    total: Option<i64>,
+) -> Result<(), String> {
+    let conn = rusqlite::Connection::open(db_path)
+        .map_err(|e| format!("Failed to open DB for sync run progress: {}", e))?;
+    ensure_sync_runs_table(&conn)?;
+    conn.execute(
+        "UPDATE sync_runs
+         SET progress_processed = COALESCE(?1, progress_processed),
+             progress_total = COALESCE(?2, progress_total)
+         WHERE id = ?3",
+        rusqlite::params![processed, total, run_id],
+    )
+    .map_err(|e| format!("Failed to update sync run progress: {}", e))?;
+    Ok(())
+}
+
+fn parse_found_total(line: &str) -> Option<i64> {
+    // Example: "Found 1234 messages to process"
+    let marker = "Found ";
+    let start = line.find(marker)?;
+    let rest = &line[(start + marker.len())..];
+    let end = rest.find(" messages to process")?;
+    rest[..end].trim().parse::<i64>().ok()
+}
+
+fn parse_progress_line(line: &str) -> Option<(i64, i64)> {
+    // Example: "[Progress] 50/412 | fetched=..."
+    let marker = "] ";
+    let idx = line.find(marker)?;
+    let rest = &line[(idx + marker.len())..];
+    let slash = rest.find('/')?;
+    let processed = rest[..slash].trim().parse::<i64>().ok()?;
+    let after_slash = &rest[(slash + 1)..];
+    let total_str = after_slash.split_whitespace().next()?;
+    let total = total_str.trim().parse::<i64>().ok()?;
+    Some((processed, total))
 }
 
 pub async fn execute_onboarding_tool(
@@ -896,10 +974,16 @@ async fn import_messages(tool_input: &Value) -> Result<Value, String> {
         find_project_root().ok_or("Could not find project root (config.py not found)")?;
 
     let script = match (source, method) {
-        ("imessage", "local_sync") => project_root.join("sync/imessage_sync.py"),
-        ("whatsapp", "local_sync") => project_root.join("sync/whatsapp_desktop_sync.py"),
+        ("imessage", "local_sync") | ("imessage", "initial_sync") => {
+            project_root.join("sync/imessage_sync.py")
+        }
+        ("whatsapp", "local_sync") | ("whatsapp", "initial_sync") => {
+            project_root.join("sync/whatsapp_desktop_sync.py")
+        }
         ("whatsapp", "backup_import") => project_root.join("import_whatsapp.py"),
-        ("gmail", "local_sync") => project_root.join("sync/gmail_sync.py"),
+        ("gmail", "local_sync") | ("gmail", "initial_sync") => {
+            project_root.join("sync/gmail_sync.py")
+        }
         _ => {
             return Err(format!(
                 "Unknown source/method combination: {}/{}",
@@ -923,18 +1007,81 @@ async fn import_messages(tool_input: &Value) -> Result<Value, String> {
 
     let run_id = start_sync_run(&db_path, &source_key).ok();
 
-    let output = tokio::process::Command::new("python3")
+    let mut cmd = tokio::process::Command::new("python3");
+    cmd.arg("-u")
         .arg(&script)
         .env("THYSELF_DATA_DIR", data_dir.display().to_string())
         .current_dir(&project_root)
-        .output()
-        .await
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    if method == "initial_sync" {
+        cmd.arg("--initial");
+    }
+
+    let mut child = cmd
+        .spawn()
         .map_err(|e| format!("Failed to run {}: {}", script.display(), e))?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let stdout_pipe = child
+        .stdout
+        .take()
+        .ok_or_else(|| "Failed to capture sync stdout".to_string())?;
+    let stderr_pipe = child
+        .stderr
+        .take()
+        .ok_or_else(|| "Failed to capture sync stderr".to_string())?;
 
-    if output.status.success() {
+    let run_for_stdout = run_id;
+    let db_for_stdout = db_path.clone();
+    let stdout_task = tokio::spawn(async move {
+        let mut out = String::new();
+        let mut reader = BufReader::new(stdout_pipe).lines();
+        while let Ok(Some(line)) = reader.next_line().await {
+            out.push_str(&line);
+            out.push('\n');
+
+            if let Some(total) = parse_found_total(&line) {
+                if let Some(id) = run_for_stdout {
+                    let _ = update_sync_run_progress(&db_for_stdout, id, Some(0), Some(total));
+                }
+            } else if let Some((processed, total)) = parse_progress_line(&line) {
+                if let Some(id) = run_for_stdout {
+                    let _ = update_sync_run_progress(
+                        &db_for_stdout,
+                        id,
+                        Some(processed),
+                        Some(total),
+                    );
+                }
+            }
+        }
+        out
+    });
+
+    let stderr_task = tokio::spawn(async move {
+        let mut err = String::new();
+        let mut reader = BufReader::new(stderr_pipe).lines();
+        while let Ok(Some(line)) = reader.next_line().await {
+            err.push_str(&line);
+            err.push('\n');
+        }
+        err
+    });
+
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| format!("Failed waiting for {}: {}", script.display(), e))?;
+    let stdout = stdout_task
+        .await
+        .map_err(|e| format!("Failed reading sync stdout: {}", e))?;
+    let stderr = stderr_task
+        .await
+        .map_err(|e| format!("Failed reading sync stderr: {}", e))?;
+    let success = status.success();
+
+    if success {
         let (messages_added, last_message_at) = match rusqlite::Connection::open(&db_path) {
             Ok(conn) => {
                 let count_after = source_message_count(&conn, source).unwrap_or(count_before);
@@ -1105,7 +1252,7 @@ pub fn get_onboarding_tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "import_messages",
-            "description": "Import messages from a local database or extracted backup into Thyself. For iMessage, use source='imessage' with method='local_sync' (reads Mac's chat.db). For WhatsApp, use source='whatsapp' with method='local_sync' (WhatsApp Desktop) or method='backup_import' (from extracted iPhone backup). For Gmail, use source='gmail' with method='local_sync' (uses configured Google ADC credentials).",
+            "description": "Import messages from a data source into Thyself. Use method='initial_sync' for first-time setup (imports ALL messages). Use method='local_sync' for subsequent incremental syncs. Use method='backup_import' for WhatsApp iPhone backup import.",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -1116,8 +1263,8 @@ pub fn get_onboarding_tool_definitions() -> Vec<Value> {
                     },
                     "method": {
                         "type": "string",
-                        "enum": ["local_sync", "backup_import"],
-                        "description": "Import method: local_sync reads from local Mac databases, backup_import reads from extracted iPhone backup"
+                        "enum": ["local_sync", "backup_import", "initial_sync"],
+                        "description": "Import method: initial_sync for first-time full import of all messages, local_sync for incremental sync of new messages only, backup_import for WhatsApp iPhone backup extraction"
                     }
                 },
                 "required": ["source", "method"]

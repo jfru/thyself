@@ -118,8 +118,12 @@ def get_last_synced_apple_ts(thyself_conn):
     return apple_ts_from_iso(row[0])
 
 
-def sync(thyself_db_path=None):
-    """Run incremental WhatsApp Desktop sync. Returns (messages_added, last_message_at)."""
+def sync(thyself_db_path=None, initial_sync=False):
+    """Run WhatsApp Desktop sync. Returns (messages_added, last_message_at).
+
+    initial_sync=True imports ALL messages (cutoff=0).
+    initial_sync=False imports only new messages since the last sync.
+    """
     db_path = str(thyself_db_path or DB_PATH)
 
     if not os.path.exists(WA_DESKTOP_DB):
@@ -136,10 +140,17 @@ def sync(thyself_db_path=None):
 
     contact_map = load_contact_map(thyself)
     conv_map = load_conversation_map(thyself)
-    last_apple_ts = get_last_synced_apple_ts(thyself)
 
-    # Overlap by 1 hour for safety (dedup handles the rest)
-    cutoff = max(0.0, last_apple_ts - 3600)
+    if initial_sync:
+        cutoff = 0.0
+        print("  WhatsApp Desktop: running initial full sync (all messages)")
+    else:
+        last_apple_ts = get_last_synced_apple_ts(thyself)
+        cutoff = max(0.0, last_apple_ts - 3600)
+        if last_apple_ts > 0:
+            print(f"  WhatsApp Desktop: incremental sync from last timestamp")
+        else:
+            print("  WhatsApp Desktop: no previous sync found, importing all")
 
     sessions = wa.execute("""
         SELECT Z_PK, ZCONTACTJID, ZPARTNERNAME, ZSESSIONTYPE
@@ -246,5 +257,15 @@ def sync(thyself_db_path=None):
 
 
 if __name__ == "__main__":
-    count, last = sync()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Run WhatsApp Desktop sync for Thyself")
+    parser.add_argument(
+        "--initial",
+        action="store_true",
+        help="Run an initial full sync (all messages, not incremental)",
+    )
+    args = parser.parse_args()
+
+    count, last = sync(initial_sync=args.initial)
     print(f"WhatsApp Desktop sync complete: {count} messages added, last at {last}")

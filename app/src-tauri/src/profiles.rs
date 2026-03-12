@@ -458,6 +458,8 @@ CREATE TABLE IF NOT EXISTS sync_runs (
     started_at DATETIME NOT NULL,
     finished_at DATETIME,
     messages_added INTEGER DEFAULT 0,
+    progress_processed INTEGER DEFAULT 0,
+    progress_total INTEGER,
     status TEXT DEFAULT 'running',
     error_message TEXT,
     last_message_at DATETIME
