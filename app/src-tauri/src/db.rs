@@ -31,6 +31,28 @@ pub fn open_db_for_profile(data_dir: &str) -> Result<Connection, String> {
     Connection::open(&db_path).map_err(|e| format!("Failed to open database: {}", e))
 }
 
+/// Mark any sync_runs stuck in "running" as failed.
+/// Called on startup to clean up runs interrupted by a crash or quit.
+pub fn cleanup_stale_sync_runs(conn: &Connection) {
+    let has_table: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sync_runs'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|c| c > 0)
+        .unwrap_or(false);
+
+    if !has_table {
+        return;
+    }
+
+    let _ = conn.execute(
+        "UPDATE sync_runs SET status = 'failed', error_message = 'Interrupted — app restarted', finished_at = datetime('now') WHERE status = 'running'",
+        [],
+    );
+}
+
 pub fn query_rows(conn: &Connection, sql: &str, params: &[Value]) -> Result<Value, String> {
     let bound: Vec<String> = params
         .iter()
