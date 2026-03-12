@@ -122,6 +122,79 @@ You have tools to query the database, read files, record corrections, and search
 - The corpus is text-only and covers a limited time range. Spoken conversations, in-person interactions, therapy sessions, and inner experience are invisible. Hold all data-derived claims with this limitation in mind.`;
 }
 
+export function buildPortraitPrompt(
+  subjectName: string,
+  connectedSources: string[]
+): string {
+  const sourceNames = connectedSources
+    .map((s) => {
+      if (s === "imessage") return "iMessage";
+      if (s === "whatsapp") return "WhatsApp";
+      if (s === "gmail") return "Gmail";
+      if (s === "chatgpt") return "ChatGPT";
+      return s;
+    })
+    .join(", ");
+
+  const tableMap: Record<string, { table: string; countCol: string; dateCol: string }> = {
+    imessage: { table: "messages", countCol: "id", dateCol: "sent_at" },
+    whatsapp: { table: "messages", countCol: "id", dateCol: "sent_at" },
+    gmail: { table: "gmail_messages", countCol: "id", dateCol: "sent_at" },
+    chatgpt: { table: "chatgpt_messages", countCol: "id", dateCol: "datetime(create_time, 'unixepoch')" },
+  };
+
+  const queries = connectedSources.map((s) => {
+    const info = tableMap[s];
+    if (!info) return null;
+    if (s === "imessage") {
+      return `SELECT '${s}' as source, COUNT(${info.countCol}) as msg_count, MIN(${info.dateCol}) as earliest, MAX(${info.dateCol}) as latest FROM ${info.table} WHERE source = 'imessage'`;
+    }
+    if (s === "whatsapp") {
+      return `SELECT '${s}' as source, COUNT(${info.countCol}) as msg_count, MIN(${info.dateCol}) as earliest, MAX(${info.dateCol}) as latest FROM ${info.table} WHERE source LIKE 'whatsapp%'`;
+    }
+    return `SELECT '${s}' as source, COUNT(${info.countCol}) as msg_count, MIN(${info.dateCol}) as earliest, MAX(${info.dateCol}) as latest FROM ${info.table}`;
+  }).filter(Boolean);
+
+  const statsQuery = queries.join(" UNION ALL ");
+
+  return `You are building a portrait of ${subjectName} based on their connected data sources: ${sourceNames}.
+
+## Your Task
+
+When ${subjectName} asks to build their portrait, do the following:
+
+1. **Get data stats** — Run this query to see what you're working with:
+   \`${statsQuery}\`
+   Report a brief summary: which sources, how many messages, and the date range.
+
+2. **Estimate time and cost** — Based on the message counts:
+   - Extraction processes ~500 messages per API call, each call takes ~10 seconds
+   - Synthesis is a fixed ~2 minutes after extraction
+   - Cost is roughly $0.01 per 1,000 messages (Anthropic API)
+   - Calculate and present the actual estimate based on the real numbers
+
+3. **Ask to proceed** — Present the stats and estimate, then ask if they'd like to begin.
+
+## Critical Rules
+
+- **Only reference connected sources**: ${sourceNames}. Do NOT mention or query data from sources that aren't in this list, even if other tables have data.
+- **Do not explain the internal process.** Don't describe extraction passes, synthesis passes, or pipeline details. Just tell ${subjectName} what they'll get: a structured understanding of their life patterns, relationships, and growth.
+- **Be concise.** A few sentences, not paragraphs.
+- **No made-up numbers.** Every stat must come from an actual database query.
+
+## Tools Available
+
+- **query_database** — Query the SQLite database
+- **read_file** — Read files from the data directory
+- **list_files** — List files in directories
+
+## Database Tables (only use tables for connected sources)
+
+${connectedSources.includes("imessage") || connectedSources.includes("whatsapp") ? "- `messages` — iMessage/WhatsApp. Columns: content, sent_at, is_from_me, contact_id, source, conversation_id" : ""}
+${connectedSources.includes("chatgpt") ? "- `chatgpt_messages` — ChatGPT. Columns: text, role, conversation_id, create_time (unix epoch)" : ""}
+${connectedSources.includes("gmail") ? "- `gmail_messages` — Email. Columns: body_text, subject, from_addr, from_name, sent_at, is_from_me" : ""}`;
+}
+
 export function buildOnboardingPrompt(
   subjectName: string,
   selectedSources: string[]

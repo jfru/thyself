@@ -10,7 +10,7 @@ import type {
   FileAttachment,
   UserMessage,
 } from "../lib/types";
-import { buildSystemPrompt, buildOnboardingPrompt } from "../lib/systemPrompt";
+import { buildSystemPrompt, buildOnboardingPrompt, buildPortraitPrompt } from "../lib/systemPrompt";
 
 function cleanToolResult(result: string): string {
   const idx = result.indexOf("\n\n[Reminder: Present interpretations");
@@ -105,16 +105,17 @@ export interface StreamChatOptions {
   subjectName?: string;
   onboardingStatus?: string;
   selectedSources?: string[];
-  activeSessionKind?: "conversation" | "setup" | null;
+  connectedSources?: string[];
+  activeSessionKind?: "conversation" | "setup" | "portrait" | null;
 }
 
 interface SendMessageOptions {
-  sessionKind?: "conversation" | "setup" | null;
+  sessionKind?: "conversation" | "setup" | "portrait" | null;
   selectedSourcesOverride?: string[];
 }
 
 export function useStreamChat(sessionIdRef: React.RefObject<string | null>, opts: StreamChatOptions = {}) {
-  const { subjectName, onboardingStatus, selectedSources, activeSessionKind } = opts;
+  const { subjectName, onboardingStatus, selectedSources, connectedSources, activeSessionKind } = opts;
   const [messages, setMessages] = useState<Message[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const unlistenRef = useRef<(() => void) | null>(null);
@@ -404,9 +405,18 @@ export function useStreamChat(sessionIdRef: React.RefObject<string | null>, opts
           onboardingStatus === "pending" &&
           effectiveSelectedSources.length > 0 &&
           effectiveSessionKind === "setup";
-        const systemPrompt = shouldUseOnboardingPrompt
-          ? buildOnboardingPrompt(subjectName || "User", effectiveSelectedSources)
-          : buildSystemPrompt(subjectName || "User", sessionIdRef.current ?? undefined);
+        const shouldUsePortraitPrompt = effectiveSessionKind === "portrait";
+        let systemPrompt: string;
+        if (shouldUsePortraitPrompt) {
+          systemPrompt = buildPortraitPrompt(
+            subjectName || "User",
+            connectedSources ?? effectiveSelectedSources
+          );
+        } else if (shouldUseOnboardingPrompt) {
+          systemPrompt = buildOnboardingPrompt(subjectName || "User", effectiveSelectedSources);
+        } else {
+          systemPrompt = buildSystemPrompt(subjectName || "User", sessionIdRef.current ?? undefined);
+        }
 
         // #region agent log
         fetch('http://127.0.0.1:7709/ingest/d9149a58-da3e-4f10-b872-bd18ccc36ca6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'2ee486'},body:JSON.stringify({sessionId:'2ee486',location:'useStreamChat.ts:278',message:'system prompt selected',data:{isOnboarding: shouldUseOnboardingPrompt, onboardingStatus, selectedSources, activeSessionKind: effectiveSessionKind, promptStart: systemPrompt.substring(0, 80)},timestamp:Date.now()})}).catch(()=>{});
@@ -435,7 +445,7 @@ export function useStreamChat(sessionIdRef: React.RefObject<string | null>, opts
         setIsStreaming(false);
       }
     },
-    [messages, isStreaming, onboardingStatus, selectedSources, subjectName, activeSessionKind]
+    [messages, isStreaming, onboardingStatus, selectedSources, connectedSources, subjectName, activeSessionKind]
   );
 
   const stopStreaming = useCallback(() => {

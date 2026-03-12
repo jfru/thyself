@@ -77,6 +77,10 @@ export interface SystemMessage {
     label: string;
     message: string;
   };
+  secondaryAction?: {
+    label: string;
+    message: string;
+  };
   timestamp: number;
 }
 
@@ -121,7 +125,7 @@ export interface SessionMeta {
   name: string;
   createdAt: string;
   status: "active" | "completed";
-  kind?: "conversation" | "setup";
+  kind?: "conversation" | "setup" | "portrait";
   summaryFile: string | null;
   chatHistory: Message[];
 }
