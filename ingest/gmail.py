@@ -447,7 +447,7 @@ class GmailIngester:
         self,
         query: str,
         max_results: Optional[int] = None,
-        batch_log_interval: int = 50,
+        batch_log_interval: int = 10,
     ):
         self._ensure_db()
         conn = sqlite3.connect(self.db_path)
@@ -490,7 +490,7 @@ class GmailIngester:
                     print(f"  DB error for {parsed['gmail_id']}: {e}")
                     self.stats["errors"] += 1
 
-            if (i + 1) % batch_log_interval == 0:
+            if i == 0 or (i + 1) % batch_log_interval == 0:
                 conn.commit()
                 self._print_stats(i + 1, len(msg_stubs))
 
