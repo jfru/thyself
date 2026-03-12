@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { invokeCommand } from "../lib/tauriBridge";
-import { Plus, MessageSquare, PanelLeftClose, PanelLeft, User, ChevronDown, Trash2, Settings, Sparkles } from "lucide-react";
+import { Plus, MessageSquare, PanelLeftClose, PanelLeft, User, ChevronDown, ChevronRight, Trash2, Settings, Sparkles } from "lucide-react";
 import type { SessionMeta, Profile } from "../lib/types";
 
 interface SessionSidebarProps {
@@ -32,6 +32,9 @@ export function SessionSidebar({
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [allProfiles, setAllProfiles] = useState<Profile[]>([]);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [conversationsOpen, setConversationsOpen] = useState(true);
+  const [conversationsShowAll, setConversationsShowAll] = useState(false);
+  const [gettingStartedOpen, setGettingStartedOpen] = useState(true);
 
   useEffect(() => {
     loadSessions();
@@ -147,48 +150,89 @@ export function SessionSidebar({
         ) : (
           <div className="py-2">
             {conversationSessions.length > 0 && (
-              <div className="px-4 py-1 text-[10px] uppercase tracking-wider text-zinc-600">
+              <button
+                onClick={() => setConversationsOpen((v) => !v)}
+                className="flex w-full items-center gap-1 px-4 py-1 text-[10px] uppercase tracking-wider text-zinc-600 hover:text-zinc-400 transition-colors"
+              >
+                <ChevronRight
+                  size={10}
+                  className={`transition-transform ${conversationsOpen ? "rotate-90" : ""}`}
+                />
                 Conversations
-              </div>
+              </button>
             )}
-            {conversationSessions.map((session) => {
-              const isActive = session.id === activeSessionId;
+            {conversationsOpen && (() => {
+              const COLLAPSED_LIMIT = 5;
+              const visible = conversationsShowAll
+                ? conversationSessions
+                : conversationSessions.slice(0, COLLAPSED_LIMIT);
+              const hasMore = conversationSessions.length > COLLAPSED_LIMIT;
               return (
-                <button
-                  key={session.id}
-                  onClick={() => onLoadSession(session.id)}
-                  className={`flex w-full items-start gap-2 px-4 py-2.5 text-left transition-colors ${
-                    isActive
-                      ? "bg-zinc-800/60 border-l-2 border-blue-500"
-                      : "hover:bg-zinc-900 border-l-2 border-transparent"
-                  }`}
-                >
-                  <MessageSquare
-                    size={14}
-                    className={`mt-0.5 flex-shrink-0 ${
-                      isActive ? "text-blue-400" : "text-zinc-600"
-                    }`}
-                  />
-                  <div className="min-w-0">
-                    <div className={`text-xs truncate ${
-                      isActive ? "text-zinc-200 font-medium" : "text-zinc-400"
-                    }`}>
-                      {session.name}
-                    </div>
-                    <div className="text-xs text-zinc-600 truncate">
-                      {formatDate(session.createdAt)}
-                    </div>
-                  </div>
-                </button>
+                <>
+                  {visible.map((session) => {
+                    const isActive = session.id === activeSessionId;
+                    return (
+                      <button
+                        key={session.id}
+                        onClick={() => onLoadSession(session.id)}
+                        className={`flex w-full items-start gap-2 px-4 py-2.5 text-left transition-colors ${
+                          isActive
+                            ? "bg-zinc-800/60 border-l-2 border-blue-500"
+                            : "hover:bg-zinc-900 border-l-2 border-transparent"
+                        }`}
+                      >
+                        <MessageSquare
+                          size={14}
+                          className={`mt-0.5 flex-shrink-0 ${
+                            isActive ? "text-blue-400" : "text-zinc-600"
+                          }`}
+                        />
+                        <div className="min-w-0">
+                          <div className={`text-xs truncate ${
+                            isActive ? "text-zinc-200 font-medium" : "text-zinc-400"
+                          }`}>
+                            {session.name}
+                          </div>
+                          <div className="text-xs text-zinc-600 truncate">
+                            {formatDate(session.createdAt)}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                  {hasMore && !conversationsShowAll && (
+                    <button
+                      onClick={() => setConversationsShowAll(true)}
+                      className="w-full px-4 py-1.5 text-[11px] text-zinc-500 hover:text-zinc-300 text-left transition-colors"
+                    >
+                      more...
+                    </button>
+                  )}
+                  {hasMore && conversationsShowAll && (
+                    <button
+                      onClick={() => setConversationsShowAll(false)}
+                      className="w-full px-4 py-1.5 text-[11px] text-zinc-500 hover:text-zinc-300 text-left transition-colors"
+                    >
+                      show less
+                    </button>
+                  )}
+                </>
               );
-            })}
+            })()}
 
             {setupSessions.length > 0 && (
-              <div className="mt-3 px-4 py-1 text-[10px] uppercase tracking-wider text-zinc-600">
+              <button
+                onClick={() => setGettingStartedOpen((v) => !v)}
+                className="flex w-full items-center gap-1 mt-3 px-4 py-1 text-[10px] uppercase tracking-wider text-zinc-600 hover:text-zinc-400 transition-colors"
+              >
+                <ChevronRight
+                  size={10}
+                  className={`transition-transform ${gettingStartedOpen ? "rotate-90" : ""}`}
+                />
                 Getting Started
-              </div>
+              </button>
             )}
-            {setupSessions.map((session) => {
+            {gettingStartedOpen && setupSessions.map((session) => {
               const isActive = session.id === activeSessionId;
               const isPortrait = session.kind === "portrait";
               const Icon = isPortrait ? Sparkles : Settings;
