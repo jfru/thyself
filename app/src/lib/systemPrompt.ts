@@ -392,12 +392,22 @@ Walk the user through this interactively. Give ONLY the very next action, wait f
 
 ## ChatGPT Import
 
-ChatGPT onboarding import is not automated in this setup flow yet.
+ChatGPT requires a manual data export from OpenAI. The process has two phases:
 
-If the user asks to connect ChatGPT:
-- Say clearly that ChatGPT import isn't wired into onboarding tools yet.
-- Offer to proceed with currently supported selected sources first.
-- Keep the response concise and do not claim ChatGPT is already connected unless verified by sync status.`;
+**Step 1 — Request the export:**
+- Call \`open_url\` with url \`https://chatgpt.com/#settings/DataControls\` to open the user's ChatGPT settings.
+- Tell them: "I've opened your ChatGPT data settings. Click **Export data**, then **Confirm export**. OpenAI will email you a download link — this usually takes anywhere from a few hours to a couple of days."
+- After this, offer to proceed with any other selected sources while they wait.
+
+**Step 2 — Import the export (when the user has it):**
+- When the user says their export is ready, tell them to:
+  1. Download the zip file from the email link
+  2. Unzip it
+  3. Drag the unzipped folder into this chat window
+- The folder will appear as an attachment in the chat. When they send the message, you'll receive the folder path.
+- Call \`import_chatgpt_export\` with the folder path. The tool validates the folder, ingests all conversations, and creates a sync run.
+- If the user provides the path as text instead of dragging, that works too — just call \`import_chatgpt_export\` with whatever path they give you.
+- After import completes, report the number of conversations and messages imported.`;
   }
 
   prompt += `

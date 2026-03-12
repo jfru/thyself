@@ -1,15 +1,20 @@
 import { useState, useRef, useEffect, useCallback, KeyboardEvent, DragEvent, ClipboardEvent } from "react";
-import { Send, Square, Image, X } from "lucide-react";
-import type { ImageAttachment } from "../lib/types";
-import { isTauri, pickImages } from "../lib/tauriBridge";
+import { Send, Square, Paperclip, X, Folder, FileText } from "lucide-react";
+import type { ImageAttachment, FileAttachment } from "../lib/types";
+import { isTauri } from "../lib/tauriBridge";
 
 const ACCEPTED_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20 MB
 
 interface InputBoxProps {
-  onSend: (text: string, images?: ImageAttachment[]) => void;
+  onSend: (text: string, images?: ImageAttachment[], options?: { selectedSourcesOverride?: string[] }, files?: FileAttachment[]) => void;
   onStop: () => void;
   isStreaming: boolean;
+  pendingDroppedImages?: ImageAttachment[];
+  onConsumeDroppedImages?: (imgs: ImageAttachment[]) => ImageAttachment[];
+  pendingDroppedFiles?: FileAttachment[];
+  onConsumeDroppedFiles?: (files: FileAttachment[]) => FileAttachment[];
+  isTauriDragging?: boolean;
 }
 
 function fileToAttachment(file: File): Promise<ImageAttachment | null> {
@@ -31,9 +36,19 @@ function fileToAttachment(file: File): Promise<ImageAttachment | null> {
   });
 }
 
-export function InputBox({ onSend, onStop, isStreaming }: InputBoxProps) {
+export function InputBox({
+  onSend,
+  onStop,
+  isStreaming,
+  pendingDroppedImages,
+  onConsumeDroppedImages,
+  pendingDroppedFiles,
+  onConsumeDroppedFiles,
+  isTauriDragging,
+}: InputBoxProps) {
   const [text, setText] = useState("");
   const [images, setImages] = useState<ImageAttachment[]>([]);
+  const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -52,6 +67,20 @@ export function InputBox({ onSend, onStop, isStreaming }: InputBoxProps) {
     el.style.height = Math.min(el.scrollHeight, 200) + "px";
   }, [text]);
 
+  useEffect(() => {
+    if (pendingDroppedImages?.length) {
+      setImages((prev) => [...prev, ...pendingDroppedImages]);
+      onConsumeDroppedImages?.(pendingDroppedImages);
+    }
+  }, [pendingDroppedImages, onConsumeDroppedImages]);
+
+  useEffect(() => {
+    if (pendingDroppedFiles?.length) {
+      setFileAttachments((prev) => [...prev, ...pendingDroppedFiles]);
+      onConsumeDroppedFiles?.(pendingDroppedFiles);
+    }
+  }, [pendingDroppedFiles, onConsumeDroppedFiles]);
+
   const addFiles = useCallback(async (files: FileList | File[]) => {
     const results = await Promise.all(Array.from(files).map(fileToAttachment));
     const valid = results.filter((r): r is ImageAttachment => r !== null);
@@ -62,12 +91,22 @@ export function InputBox({ onSend, onStop, isStreaming }: InputBoxProps) {
     setImages((prev) => prev.filter((_, i) => i !== idx));
   }, []);
 
+  const removeFileAttachment = useCallback((idx: number) => {
+    setFileAttachments((prev) => prev.filter((_, i) => i !== idx));
+  }, []);
+
   const handleSubmit = () => {
     const trimmed = text.trim();
-    if ((!trimmed && images.length === 0) || isStreaming) return;
-    onSend(trimmed, images.length > 0 ? images : undefined);
+    if ((!trimmed && images.length === 0 && fileAttachments.length === 0) || isStreaming) return;
+    onSend(
+      trimmed,
+      images.length > 0 ? images : undefined,
+      undefined,
+      fileAttachments.length > 0 ? fileAttachments : undefined
+    );
     setText("");
     setImages([]);
+    setFileAttachments([]);
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
@@ -104,7 +143,7 @@ export function InputBox({ onSend, onStop, isStreaming }: InputBoxProps) {
     e.preventDefault();
     e.stopPropagation();
     dragCounter.current++;
-    if (e.dataTransfer?.types.includes("Files")) setIsDragging(true);
+    if (!isTauri() && e.dataTransfer?.types.includes("Files")) setIsDragging(true);
   };
 
   const handleDragLeave = (e: DragEvent) => {
@@ -124,20 +163,33 @@ export function InputBox({ onSend, onStop, isStreaming }: InputBoxProps) {
     e.stopPropagation();
     dragCounter.current = 0;
     setIsDragging(false);
-    if (e.dataTransfer?.files.length) addFiles(e.dataTransfer.files);
+    if (!isTauri() && e.dataTransfer?.files.length) {
+      addFiles(e.dataTransfer.files);
+    }
   };
 
-  const handlePickImages = useCallback(async () => {
+  const handleAttach = useCallback(async () => {
     if (isStreaming) return;
     if (isTauri()) {
-      const picked = await pickImages();
-      if (picked.length) setImages((prev) => [...prev, ...picked]);
+      try {
+        const { invokeCommand } = await import("../lib/tauriBridge");
+        const result = await invokeCommand<{
+          images: ImageAttachment[];
+          files: Array<{ type: "file" | "folder"; path: string; name: string }>;
+        }>("pick_files");
+        if (result.images.length) setImages((prev) => [...prev, ...result.images]);
+        if (result.files.length) setFileAttachments((prev) => [...prev, ...result.files]);
+      } catch (err) {
+        console.error("File picker failed:", err);
+      }
     } else {
       fileInputRef.current?.click();
     }
   }, [isStreaming]);
 
-  const hasContent = text.trim() || images.length > 0;
+  const showDragOverlay = isDragging || isTauriDragging;
+  const hasContent = text.trim() || images.length > 0 || fileAttachments.length > 0;
+  const hasAttachments = images.length > 0 || fileAttachments.length > 0;
 
   return (
     <div
@@ -150,25 +202,25 @@ export function InputBox({ onSend, onStop, isStreaming }: InputBoxProps) {
       <div className="mx-auto max-w-3xl">
         <div
           className={`relative rounded-xl border bg-zinc-900 transition-colors ${
-            isDragging
+            showDragOverlay
               ? "border-blue-500 bg-blue-500/5"
               : "border-zinc-700 focus-within:border-zinc-500"
           }`}
         >
-          {isDragging && (
+          {showDragOverlay && (
             <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-blue-500/10 pointer-events-none">
               <div className="flex items-center gap-2 text-sm text-blue-400 font-medium">
-                <Image size={18} />
-                Drop images here
+                <Paperclip size={18} />
+                Drop files here
               </div>
             </div>
           )}
 
-          {images.length > 0 && (
+          {hasAttachments && (
             <div className="flex flex-wrap gap-2 px-3 pt-3">
               {images.map((img, idx) => (
                 <div
-                  key={idx}
+                  key={`img-${idx}`}
                   className="group/thumb relative h-16 w-16 rounded-lg overflow-hidden border border-zinc-700 bg-zinc-800 flex-shrink-0"
                 >
                   <img
@@ -184,19 +236,39 @@ export function InputBox({ onSend, onStop, isStreaming }: InputBoxProps) {
                   </button>
                 </div>
               ))}
+              {fileAttachments.map((f, idx) => (
+                <div
+                  key={`file-${idx}`}
+                  className="group/chip flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-xs text-zinc-300"
+                >
+                  {f.type === "folder" ? (
+                    <Folder size={13} className="text-blue-400 flex-shrink-0" />
+                  ) : (
+                    <FileText size={13} className="text-zinc-400 flex-shrink-0" />
+                  )}
+                  <span className="max-w-[140px] truncate">{f.name}</span>
+                  <button
+                    onClick={() => removeFileAttachment(idx)}
+                    className="rounded-full p-0.5 opacity-0 group-hover/chip:opacity-100 transition-opacity hover:bg-zinc-700"
+                  >
+                    <X size={10} className="text-zinc-400" />
+                  </button>
+                </div>
+              ))}
             </div>
           )}
 
           <div className="flex items-center gap-2 px-3 py-3">
-            <button
-              onClick={handlePickImages}
-              disabled={isStreaming}
-              className="flex-shrink-0 rounded-lg p-1.5 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 disabled:opacity-30 transition-all"
-              title="Attach image"
-            >
-              <Image size={18} />
-            </button>
-            {/* Browser-only file input fallback (Tauri uses native dialog) */}
+            <div className="relative flex-shrink-0">
+              <button
+                onClick={handleAttach}
+                disabled={isStreaming}
+                className="rounded-lg p-1.5 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 disabled:opacity-30 transition-all"
+                title="Attach file"
+              >
+                <Paperclip size={18} />
+              </button>
+            </div>
             <input
               ref={fileInputRef}
               type="file"

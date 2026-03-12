@@ -894,6 +894,115 @@ return paths"#,
     Ok(Value::Array(images))
 }
 
+#[tauri::command]
+pub async fn pick_files() -> Result<Value, String> {
+    let output = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(
+            r#"set theFiles to choose file with multiple selections allowed
+set paths to ""
+repeat with f in theFiles
+    set paths to paths & (POSIX path of f) & linefeed
+end repeat
+return paths"#,
+        )
+        .output()
+        .map_err(|e| format!("Failed to run osascript: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("User canceled") || stderr.contains("-128") {
+            return Ok(json!({ "images": [], "files": [] }));
+        }
+        return Err(format!("File picker failed: {}", stderr));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let paths: Vec<String> = stdout
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect();
+
+    read_dropped_files(paths).await
+}
+
+#[tauri::command]
+pub async fn pick_folder() -> Result<Value, String> {
+    let output = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(r#"set theFolder to choose folder
+return POSIX path of theFolder"#)
+        .output()
+        .map_err(|e| format!("Failed to run osascript: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("User canceled") || stderr.contains("-128") {
+            return Ok(json!({ "images": [], "files": [] }));
+        }
+        return Err(format!("Folder picker failed: {}", stderr));
+    }
+
+    let dir_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if dir_path.is_empty() {
+        return Ok(json!({ "images": [], "files": [] }));
+    }
+
+    let name = std::path::Path::new(&dir_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(&dir_path)
+        .to_string();
+
+    Ok(json!({
+        "images": [],
+        "files": [{ "type": "folder", "path": dir_path, "name": name }]
+    }))
+}
+
+#[tauri::command]
+pub async fn read_dropped_files(paths: Vec<String>) -> Result<Value, String> {
+    let image_exts: std::collections::HashSet<&str> =
+        ["jpg", "jpeg", "png", "gif", "webp"].iter().copied().collect();
+
+    let mut images = Vec::new();
+    let mut files = Vec::new();
+
+    for path_str in &paths {
+        let path = std::path::Path::new(path_str);
+        if path.is_dir() {
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(path_str)
+                .to_string();
+            files.push(json!({ "type": "folder", "path": path_str, "name": name }));
+        } else if path.is_file() {
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+            if image_exts.contains(ext.as_str()) {
+                match read_image_file(path_str) {
+                    Ok(img) => images.push(img),
+                    Err(e) => eprintln!("Skipping image {}: {}", path_str, e),
+                }
+            } else {
+                let name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(path_str)
+                    .to_string();
+                files.push(json!({ "type": "file", "path": path_str, "name": name }));
+            }
+        }
+    }
+
+    Ok(json!({ "images": images, "files": files }))
+}
+
 // #region agent log
 #[tauri::command]
 pub async fn cmd_debug_log(location: String, message: String, data: String) -> Result<(), String> {

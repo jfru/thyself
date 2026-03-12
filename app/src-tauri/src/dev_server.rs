@@ -79,6 +79,8 @@ pub async fn start_dev_server() {
         .route("/api/validate_api_key", post(handle_validate_api_key))
         .route("/api/cmd_open_icloud_settings", post(handle_open_icloud_settings))
         .route("/api/cmd_open_finder_iphone", post(handle_open_finder_iphone))
+        .route("/api/import_chatgpt_export", post(handle_import_chatgpt_export))
+        .route("/api/read_dropped_files", post(handle_read_dropped_files))
         .layer(cors)
         .with_state(state);
 
@@ -920,5 +922,40 @@ async fn handle_open_icloud_settings() -> impl IntoResponse {
 async fn handle_open_finder_iphone() -> impl IntoResponse {
     crate::onboarding_tools::perform_open_finder_iphone();
     Json(json!({"status": "opened"}))
+}
+
+#[derive(Deserialize)]
+struct ImportChatGptReq {
+    path: String,
+}
+
+async fn handle_import_chatgpt_export(
+    Json(body): Json<ImportChatGptReq>,
+) -> impl IntoResponse {
+    let input = json!({ "path": body.path });
+    match onboarding_tools::execute_onboarding_tool("import_chatgpt_export", &input).await {
+        Ok(result) => (StatusCode::OK, Json(result)),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e })),
+        ),
+    }
+}
+
+#[derive(Deserialize)]
+struct ReadDroppedFilesReq {
+    paths: Vec<String>,
+}
+
+async fn handle_read_dropped_files(
+    Json(body): Json<ReadDroppedFilesReq>,
+) -> impl IntoResponse {
+    match crate::commands::read_dropped_files(body.paths).await {
+        Ok(result) => (StatusCode::OK, Json(result)),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e })),
+        ),
+    }
 }
 

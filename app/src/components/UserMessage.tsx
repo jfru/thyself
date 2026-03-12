@@ -1,15 +1,17 @@
 import { useState, useRef, useEffect } from "react";
-import type { ImageAttachment } from "../lib/types";
+import { Folder, FileText } from "lucide-react";
+import type { ImageAttachment, FileAttachment } from "../lib/types";
 
 interface UserMessageProps {
   content: string;
   images?: ImageAttachment[];
+  files?: FileAttachment[];
   timestamp: number;
 }
 
 const COLLAPSED_MAX = 88;
 
-export function UserMessage({ content, images, timestamp }: UserMessageProps) {
+export function UserMessage({ content, images, files, timestamp }: UserMessageProps) {
   const [expanded, setExpanded] = useState(false);
   const [needsTruncation, setNeedsTruncation] = useState(false);
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
@@ -29,6 +31,7 @@ export function UserMessage({ content, images, timestamp }: UserMessageProps) {
 
   const isCollapsed = needsTruncation && !expanded;
   const hasImages = images && images.length > 0;
+  const hasFiles = files && files.length > 0;
 
   return (
     <>
@@ -61,6 +64,23 @@ export function UserMessage({ content, images, timestamp }: UserMessageProps) {
                     className="h-full w-full object-cover"
                   />
                 </button>
+              ))}
+            </div>
+          )}
+          {hasFiles && (
+            <div className="flex flex-wrap gap-2 mb-2">
+              {files.map((f, idx) => (
+                <div
+                  key={idx}
+                  className="flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-xs text-zinc-300"
+                >
+                  {f.type === "folder" ? (
+                    <Folder size={13} className="text-blue-400 flex-shrink-0" />
+                  ) : (
+                    <FileText size={13} className="text-zinc-400 flex-shrink-0" />
+                  )}
+                  <span className="max-w-[200px] truncate">{f.name}</span>
+                </div>
               ))}
             </div>
           )}

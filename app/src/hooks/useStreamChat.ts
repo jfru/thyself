@@ -7,6 +7,7 @@ import type {
   TextBlock,
   WebSearchResult,
   ImageAttachment,
+  FileAttachment,
   UserMessage,
 } from "../lib/types";
 import { buildSystemPrompt, buildOnboardingPrompt } from "../lib/systemPrompt";
@@ -123,13 +124,14 @@ export function useStreamChat(sessionIdRef: React.RefObject<string | null>, opts
   const indexMapRef = useRef<Map<number, number>>(new Map());
 
   const sendMessage = useCallback(
-    async (userText: string, images?: ImageAttachment[], options?: SendMessageOptions) => {
+    async (userText: string, images?: ImageAttachment[], options?: SendMessageOptions, files?: FileAttachment[]) => {
       if (isStreaming) return;
 
       const userMsg: UserMessage = {
         role: "user",
         content: userText,
         ...(images?.length ? { images } : {}),
+        ...(files?.length ? { files } : {}),
         timestamp: Date.now(),
       };
 
@@ -359,15 +361,28 @@ export function useStreamChat(sessionIdRef: React.RefObject<string | null>, opts
       for (const m of [...messages, userMsg].filter((m) => m.role !== "system")) {
         if (m.role === "user") {
           const um = m as UserMessage;
-          if (um.images?.length) {
-            const parts: unknown[] = um.images.map((img) => ({
-              type: "image",
-              source: {
-                type: "base64",
-                media_type: img.mediaType,
-                data: img.data,
-              },
-            }));
+          const hasImages = !!um.images?.length;
+          const hasFiles = !!um.files?.length;
+          if (hasImages || hasFiles) {
+            const parts: unknown[] = [];
+            if (um.images) {
+              for (const img of um.images) {
+                parts.push({
+                  type: "image",
+                  source: {
+                    type: "base64",
+                    media_type: img.mediaType,
+                    data: img.data,
+                  },
+                });
+              }
+            }
+            if (um.files) {
+              for (const f of um.files) {
+                const label = f.type === "folder" ? "Attached folder" : "Attached file";
+                parts.push({ type: "text", text: `[${label}: ${f.path}]` });
+              }
+            }
             if (um.content) parts.push({ type: "text", text: um.content });
             rawApiMessages.push({ role: "user", content: parts });
           } else {

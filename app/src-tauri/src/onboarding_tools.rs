@@ -199,6 +199,7 @@ fn source_message_count(conn: &rusqlite::Connection, source: &str) -> Result<i64
         "imessage" => "SELECT COUNT(*) FROM messages WHERE source = 'imessage'",
         "whatsapp" => "SELECT COUNT(*) FROM messages WHERE source = 'whatsapp'",
         "gmail" => "SELECT COUNT(*) FROM gmail_messages",
+        "chatgpt" => "SELECT COUNT(*) FROM chatgpt_messages",
         _ => return Ok(0),
     };
     conn.query_row(sql, [], |row| row.get::<_, i64>(0))
@@ -209,6 +210,21 @@ fn source_last_message_at(conn: &rusqlite::Connection, source: &str) -> Result<O
     let sql = match source {
         "imessage" | "whatsapp" => "SELECT MAX(sent_at) FROM messages WHERE source = ?1",
         "gmail" => "SELECT MAX(sent_at) FROM gmail_messages",
+        "chatgpt" => {
+            return conn
+                .query_row(
+                    "SELECT MAX(create_time) FROM chatgpt_messages WHERE create_time IS NOT NULL",
+                    [],
+                    |row| row.get::<_, Option<f64>>(0),
+                )
+                .map_err(|e| format!("Failed to query chatgpt last_message_at: {}", e))
+                .map(|opt| {
+                    opt.and_then(|ts| {
+                        chrono::DateTime::from_timestamp(ts as i64, 0)
+                            .map(|dt| dt.format("%Y-%m-%dT%H:%M:%S").to_string())
+                    })
+                });
+        }
         _ => return Ok(None),
     };
 
@@ -331,8 +347,9 @@ pub async fn execute_onboarding_tool(
         "authenticate_gmail" => authenticate_gmail().await,
         "setup_gmail_auto" => setup_gmail_auto().await,
         "find_downloaded_gmail_credential" => find_downloaded_gmail_credential().await,
-        "open_gmail_setup_url" => open_gmail_setup_url(tool_input),
+        "open_gmail_setup_url" | "open_url" => open_gmail_setup_url(tool_input),
         "import_messages" => import_messages(tool_input).await,
+        "import_chatgpt_export" => import_chatgpt_export(tool_input).await,
         _ => Err(format!("Unknown onboarding tool: {}", tool_name)),
     }
 }
@@ -1231,6 +1248,152 @@ async fn import_messages(tool_input: &Value) -> Result<Value, String> {
 }
 
 // ---------------------------------------------------------------------------
+// import_chatgpt_export
+// ---------------------------------------------------------------------------
+
+async fn import_chatgpt_export(tool_input: &Value) -> Result<Value, String> {
+    let export_path = tool_input["path"]
+        .as_str()
+        .ok_or("Missing 'path' parameter")?;
+
+    let export_dir = std::path::Path::new(export_path);
+    if !export_dir.is_dir() {
+        return Err(format!("Not a directory: {}", export_path));
+    }
+
+    let conv_files: Vec<_> = glob::glob(&format!("{}/conversations-*.json", export_path))
+        .map_err(|e| format!("Glob error: {}", e))?
+        .filter_map(Result::ok)
+        .collect();
+
+    if conv_files.is_empty() {
+        return Err(format!(
+            "No conversations-*.json files found in {}. Make sure this is an unzipped ChatGPT data export folder.",
+            export_path
+        ));
+    }
+
+    let project_root =
+        find_project_root().ok_or("Could not find project root (config.py not found)")?;
+
+    let data_dir = profiles::get_active_data_dir();
+    let db_path = data_dir.join("thyself.db");
+
+    let count_before = rusqlite::Connection::open(&db_path)
+        .ok()
+        .and_then(|conn| source_message_count(&conn, "chatgpt").ok())
+        .unwrap_or(0);
+
+    let conv_count_before = rusqlite::Connection::open(&db_path)
+        .ok()
+        .and_then(|conn| {
+            conn.query_row("SELECT COUNT(*) FROM chatgpt_conversations", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .ok()
+        })
+        .unwrap_or(0);
+
+    let run_id = start_sync_run(&db_path, "chatgpt").ok();
+
+    let mut cmd = tokio::process::Command::new("python3");
+    cmd.arg("-u")
+        .arg("-m")
+        .arg("ingest.chatgpt")
+        .arg(export_path)
+        .env("THYSELF_DATA_DIR", data_dir.display().to_string())
+        .current_dir(&project_root)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("Failed to run ingest.chatgpt: {}", e))?;
+
+    let stdout_pipe = child
+        .stdout
+        .take()
+        .ok_or_else(|| "Failed to capture stdout".to_string())?;
+    let stderr_pipe = child
+        .stderr
+        .take()
+        .ok_or_else(|| "Failed to capture stderr".to_string())?;
+
+    let stdout_task = tokio::spawn(async move {
+        let mut out = String::new();
+        let mut reader = BufReader::new(stdout_pipe).lines();
+        while let Ok(Some(line)) = reader.next_line().await {
+            out.push_str(&line);
+            out.push('\n');
+        }
+        out
+    });
+
+    let stderr_task = tokio::spawn(async move {
+        let mut err = String::new();
+        let mut reader = BufReader::new(stderr_pipe).lines();
+        while let Ok(Some(line)) = reader.next_line().await {
+            err.push_str(&line);
+            err.push('\n');
+        }
+        err
+    });
+
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| format!("Failed waiting for ingest.chatgpt: {}", e))?;
+
+    let stdout = stdout_task
+        .await
+        .map_err(|e| format!("Failed reading stdout: {}", e))?;
+    let stderr = stderr_task
+        .await
+        .map_err(|e| format!("Failed reading stderr: {}", e))?;
+
+    if status.success() {
+        let (messages_added, convs_added, last_message_at) =
+            match rusqlite::Connection::open(&db_path) {
+                Ok(conn) => {
+                    let msg_after = source_message_count(&conn, "chatgpt").unwrap_or(count_before);
+                    let conv_after = conn
+                        .query_row("SELECT COUNT(*) FROM chatgpt_conversations", [], |row| {
+                            row.get::<_, i64>(0)
+                        })
+                        .unwrap_or(conv_count_before);
+                    let last = source_last_message_at(&conn, "chatgpt").ok().flatten();
+                    (
+                        msg_after.saturating_sub(count_before),
+                        conv_after.saturating_sub(conv_count_before),
+                        last,
+                    )
+                }
+                Err(_) => (0, 0, None),
+            };
+
+        if let Some(id) = run_id {
+            let _ = finish_sync_run(&db_path, id, messages_added, last_message_at.clone(), None);
+        }
+
+        Ok(json!({
+            "status": "ok",
+            "output": stdout,
+            "messages_imported": messages_added,
+            "conversations_imported": convs_added,
+            "last_message_at": last_message_at,
+        }))
+    } else {
+        if let Some(id) = run_id {
+            let _ = finish_sync_run(&db_path, id, 0, None, Some(stderr.clone()));
+        }
+        Err(format!(
+            "ChatGPT import failed:\nstdout: {}\nstderr: {}",
+            stdout, stderr
+        ))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tool definitions for the onboarding agent
 // ---------------------------------------------------------------------------
 
@@ -1399,8 +1562,8 @@ pub fn get_onboarding_tool_definitions() -> Vec<Value> {
             }
         }),
         json!({
-            "name": "open_gmail_setup_url",
-            "description": "Open a specific URL in the user's default browser. Used to open Google Cloud Console pages during Gmail credential setup.",
+            "name": "open_url",
+            "description": "Open a URL in the user's default browser. Use for opening settings pages, documentation, or any web URL the user needs to visit.",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -1410,6 +1573,20 @@ pub fn get_onboarding_tool_definitions() -> Vec<Value> {
                     }
                 },
                 "required": ["url"]
+            }
+        }),
+        json!({
+            "name": "import_chatgpt_export",
+            "description": "Import a ChatGPT data export folder into Thyself. The folder should be the unzipped ChatGPT data export containing conversations-*.json files. Creates a sync run so the status panel updates to 'Connected' on success.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Absolute path to the unzipped ChatGPT export directory"
+                    }
+                },
+                "required": ["path"]
             }
         }),
         json!({

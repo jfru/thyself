@@ -1,17 +1,18 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { MessageList } from "./MessageList";
 import { InputBox } from "./InputBox";
 import { SessionSummaryBlock } from "./SessionSummaryBlock";
 import { SyncStatusIndicator } from "./SyncStatusIndicator";
 import { SetupSourcesStatusPanel } from "./SetupSourcesStatusPanel";
 import { useAutoScroll } from "../hooks/useAutoScroll";
-import type { Message, ImageAttachment } from "../lib/types";
+import type { Message, ImageAttachment, FileAttachment } from "../lib/types";
+import { isTauri, invokeCommand } from "../lib/tauriBridge";
 import { ArrowDown, Trash2 } from "lucide-react";
 
 interface ChatViewProps {
   messages: Message[];
   isStreaming: boolean;
-  onSend: (text: string, images?: ImageAttachment[]) => void;
+  onSend: (text: string, images?: ImageAttachment[], options?: { selectedSourcesOverride?: string[] }, files?: FileAttachment[]) => void;
   onStop: () => void;
   onClear?: () => void;
   sessionSummary?: string | null;
@@ -46,6 +47,67 @@ export function ChatView({
     messages,
   ]);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [pendingImages, setPendingImages] = useState<ImageAttachment[]>([]);
+  const [pendingFiles, setPendingFiles] = useState<FileAttachment[]>([]);
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+
+    (async () => {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      if (cancelled) return;
+      const appWindow = getCurrentWindow();
+
+      unlisten = await appWindow.onDragDropEvent(async (event) => {
+        if (event.payload.type === "enter") {
+          setIsDraggingOver(true);
+        } else if (event.payload.type === "leave") {
+          setIsDraggingOver(false);
+        } else if (event.payload.type === "drop") {
+          setIsDraggingOver(false);
+          const paths = (event.payload as { type: "drop"; paths: string[] }).paths;
+          if (!paths?.length) return;
+
+          try {
+            const result = await invokeCommand<{
+              images: ImageAttachment[];
+              files: Array<{ type: "file" | "folder"; path: string; name: string }>;
+            }>("read_dropped_files", { paths });
+
+            if (result.images.length) {
+              setPendingImages((prev) => [...prev, ...result.images]);
+            }
+            if (result.files.length) {
+              setPendingFiles((prev) => [...prev, ...result.files]);
+            }
+          } catch (err) {
+            console.error("Failed to process dropped files:", err);
+          }
+        }
+      });
+
+      if (cancelled) { unlisten(); unlisten = undefined; }
+    })();
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  const handleConsumeDroppedImages = useCallback((imgs: ImageAttachment[]) => {
+    setPendingImages([]);
+    return imgs;
+  }, []);
+
+  const handleConsumeDroppedFiles = useCallback((files: FileAttachment[]) => {
+    setPendingFiles([]);
+    return files;
+  }, []);
 
   const showClearButton = onClear && messages.length > 0 && !isReadOnly;
 
@@ -114,7 +176,16 @@ export function ChatView({
           This session has ended. Start a new session to continue chatting.
         </div>
       ) : (
-        <InputBox onSend={onSend} onStop={onStop} isStreaming={isStreaming} />
+        <InputBox
+          onSend={onSend}
+          onStop={onStop}
+          isStreaming={isStreaming}
+          pendingDroppedImages={pendingImages}
+          onConsumeDroppedImages={handleConsumeDroppedImages}
+          pendingDroppedFiles={pendingFiles}
+          onConsumeDroppedFiles={handleConsumeDroppedFiles}
+          isTauriDragging={isDraggingOver}
+        />
       )}
     </div>
   );

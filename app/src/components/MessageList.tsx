@@ -84,6 +84,7 @@ export function MessageList({ messages, isStreaming, onAction }: MessageListProp
               key={`msg-${i}`}
               content={um.content}
               images={um.images}
+              files={um.files}
               timestamp={um.timestamp}
             />
           );

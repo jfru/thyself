@@ -49,10 +49,17 @@ export interface ImageAttachment {
   name: string;
 }
 
+export interface FileAttachment {
+  type: "file" | "folder";
+  path: string;
+  name: string;
+}
+
 export interface UserMessage {
   role: "user";
   content: string;
   images?: ImageAttachment[];
+  files?: FileAttachment[];
   timestamp: number;
 }
 

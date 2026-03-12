@@ -6,7 +6,7 @@ import { OnboardingWelcome } from "./components/OnboardingWelcome";
 import { DataSourceGrid } from "./components/DataSourceGrid";
 import { useStreamChat } from "./hooks/useStreamChat";
 import { invokeCommand } from "./lib/tauriBridge";
-import type { SessionMeta, Message, SystemMessage, Profile, ImageAttachment } from "./lib/types";
+import type { SessionMeta, Message, SystemMessage, Profile, ImageAttachment, FileAttachment } from "./lib/types";
 
 // #region agent log
 function dlog(location: string, message: string, data: Record<string, unknown>) {
@@ -458,7 +458,8 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
     async (
       text: string,
       images?: ImageAttachment[],
-      options?: { selectedSourcesOverride?: string[] }
+      options?: { selectedSourcesOverride?: string[] },
+      files?: FileAttachment[]
     ) => {
       if (text === OPEN_SETUP_ACTION) {
         await openSetupSession();
@@ -511,7 +512,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
       await sendMessage(text, images, {
         sessionKind: kind ?? "conversation",
         selectedSourcesOverride: options?.selectedSourcesOverride,
-      });
+      }, files);
     },
     [
       activeSessionId,
