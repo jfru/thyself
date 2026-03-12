@@ -81,6 +81,9 @@ pub async fn start_dev_server() {
         .route("/api/cmd_open_finder_iphone", post(handle_open_finder_iphone))
         .route("/api/import_chatgpt_export", post(handle_import_chatgpt_export))
         .route("/api/read_dropped_files", post(handle_read_dropped_files))
+        .route("/api/start_portrait_build", post(handle_start_portrait_build))
+        .route("/api/cancel_portrait_build", post(handle_cancel_portrait_build))
+        .route("/api/get_portrait_status", get(handle_get_portrait_status))
         .layer(cors)
         .with_state(state);
 
@@ -956,6 +959,81 @@ async fn handle_read_dropped_files(
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": e })),
         ),
+    }
+}
+
+async fn handle_start_portrait_build() -> impl IntoResponse {
+    match crate::commands::start_portrait_build().await {
+        Ok(result) => (StatusCode::OK, Json(result)),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e })),
+        ),
+    }
+}
+
+async fn handle_cancel_portrait_build() -> impl IntoResponse {
+    match crate::commands::cancel_portrait_build().await {
+        Ok(result) => (StatusCode::OK, Json(result)),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e })),
+        ),
+    }
+}
+
+async fn handle_get_portrait_status(
+    AxumState(state): AxumState<Arc<AppState>>,
+) -> impl IntoResponse {
+    let guard = match state.db.conn.lock() {
+        Ok(g) => g,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))),
+    };
+    let conn = match guard.as_ref() {
+        Some(c) => c,
+        None => return (StatusCode::OK, Json(Value::Null)),
+    };
+
+    let table_exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='portrait_runs'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|c| c > 0)
+        .unwrap_or(false);
+
+    if !table_exists {
+        return (StatusCode::OK, Json(Value::Null));
+    }
+
+    let result = conn.query_row(
+        "SELECT id, status, phase, total_batches, completed_batches, synthesis_batches, synthesis_completed, error_message, started_at, updated_at, finished_at, extraction_months_covered, results_summary
+         FROM portrait_runs ORDER BY id DESC LIMIT 1",
+        [],
+        |row| {
+            Ok(json!({
+                "id": row.get::<_, i64>(0)?,
+                "status": row.get::<_, String>(1)?,
+                "phase": row.get::<_, String>(2)?,
+                "total_batches": row.get::<_, Option<i64>>(3)?,
+                "completed_batches": row.get::<_, Option<i64>>(4)?,
+                "synthesis_batches": row.get::<_, Option<i64>>(5)?,
+                "synthesis_completed": row.get::<_, Option<i64>>(6)?,
+                "error_message": row.get::<_, Option<String>>(7)?,
+                "started_at": row.get::<_, Option<String>>(8)?,
+                "updated_at": row.get::<_, Option<String>>(9)?,
+                "finished_at": row.get::<_, Option<String>>(10)?,
+                "extraction_months_covered": row.get::<_, Option<String>>(11)?,
+                "results_summary": row.get::<_, Option<String>>(12)?,
+            }))
+        },
+    );
+
+    match result {
+        Ok(val) => (StatusCode::OK, Json(val)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => (StatusCode::OK, Json(Value::Null)),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": format!("Query failed: {}", e) }))),
     }
 }
 

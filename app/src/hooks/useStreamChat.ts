@@ -107,6 +107,7 @@ export interface StreamChatOptions {
   selectedSources?: string[];
   connectedSources?: string[];
   activeSessionKind?: "conversation" | "setup" | "portrait" | null;
+  portraitStatus?: { status: string; phase?: string; results_summary?: string | null } | null;
 }
 
 interface SendMessageOptions {
@@ -115,7 +116,7 @@ interface SendMessageOptions {
 }
 
 export function useStreamChat(sessionIdRef: React.RefObject<string | null>, opts: StreamChatOptions = {}) {
-  const { subjectName, onboardingStatus, selectedSources, connectedSources, activeSessionKind } = opts;
+  const { subjectName, onboardingStatus, selectedSources, connectedSources, activeSessionKind, portraitStatus } = opts;
   const [messages, setMessages] = useState<Message[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const unlistenRef = useRef<(() => void) | null>(null);
@@ -408,9 +409,13 @@ export function useStreamChat(sessionIdRef: React.RefObject<string | null>, opts
         const shouldUsePortraitPrompt = effectiveSessionKind === "portrait";
         let systemPrompt: string;
         if (shouldUsePortraitPrompt) {
+          const psForPrompt = portraitStatus && (portraitStatus.status === "running" || portraitStatus.status === "completed" || portraitStatus.status === "failed" || portraitStatus.status === "cancelled" || portraitStatus.status === "interrupted")
+            ? { status: portraitStatus.status as "running" | "completed" | "failed" | "cancelled" | "interrupted", phase: portraitStatus.phase, results_summary: portraitStatus.results_summary }
+            : null;
           systemPrompt = buildPortraitPrompt(
             subjectName || "User",
-            connectedSources ?? effectiveSelectedSources
+            connectedSources?.length ? connectedSources : effectiveSelectedSources,
+            psForPrompt
           );
         } else if (shouldUseOnboardingPrompt) {
           systemPrompt = buildOnboardingPrompt(subjectName || "User", effectiveSelectedSources);

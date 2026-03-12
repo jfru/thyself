@@ -4,6 +4,8 @@ import { InputBox } from "./InputBox";
 import { SessionSummaryBlock } from "./SessionSummaryBlock";
 import { SyncStatusIndicator } from "./SyncStatusIndicator";
 import { SetupSourcesStatusPanel } from "./SetupSourcesStatusPanel";
+import { PortraitBuildPanel } from "./PortraitBuildPanel";
+import type { PortraitRunStatus } from "./PortraitBuildPanel";
 import { useAutoScroll } from "../hooks/useAutoScroll";
 import type { Message, ImageAttachment, FileAttachment } from "../lib/types";
 import { isTauri, invokeCommand } from "../lib/tauriBridge";
@@ -26,6 +28,8 @@ interface ChatViewProps {
     selectedSourcesOverride?: string[]
   ) => void | Promise<void>;
   onRemoveSource?: (sourceId: string) => void | Promise<void>;
+  portraitStatus?: PortraitRunStatus | null;
+  onPortraitRefresh?: () => void;
 }
 
 export function ChatView({
@@ -42,6 +46,8 @@ export function ChatView({
   onAddSource,
   onRequestSourceSetup,
   onRemoveSource,
+  portraitStatus,
+  onPortraitRefresh,
 }: ChatViewProps) {
   const { containerRef, isAtBottom, scrollToBottom } = useAutoScroll([
     messages,
@@ -156,6 +162,12 @@ export function ChatView({
           onAddSource={onAddSource}
           onRequestSourceSetup={onRequestSourceSetup}
           onRemoveSource={onRemoveSource}
+        />
+      )}
+      {(activeSessionKind === "portrait" || (portraitStatus && portraitStatus.status !== "cancelled")) && (
+        <PortraitBuildPanel
+          portraitStatus={portraitStatus ?? null}
+          onRefresh={onPortraitRefresh ?? (() => {})}
         />
       )}
       <div ref={containerRef} className="flex-1 overflow-y-auto relative">

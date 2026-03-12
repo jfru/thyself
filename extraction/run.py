@@ -178,8 +178,12 @@ def run_all(
     end_batch: int | None = None,
     after_month: str | None = None,
     db_path: str | Path | None = None,
+    on_batch_complete: "Callable[[int, int], None] | None" = None,
 ) -> list[dict]:
-    """Run extraction across token-sized batches, threading summaries."""
+    """Run extraction across token-sized batches, threading summaries.
+
+    on_batch_complete(completed_count, total_planned) is called after each batch.
+    """
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         print("ERROR: ANTHROPIC_API_KEY environment variable not set")
@@ -344,6 +348,9 @@ def run_all(
         else:
             prev_summary = result.get("summary") or result.get("batch_summary")
         batch_counter += 1
+
+        if on_batch_complete:
+            on_batch_complete(len(results), len(planned))
 
     print(f"\n{'='*60}")
     print(f"Completed {len(results)} batches")

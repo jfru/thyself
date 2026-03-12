@@ -127,6 +127,10 @@ fn apple_seconds_to_iso(seconds: f64) -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
+pub fn find_project_root_pub() -> Option<PathBuf> {
+    find_project_root()
+}
+
 fn find_project_root() -> Option<PathBuf> {
     if let Ok(cwd) = std::env::current_dir() {
         let candidates = [
@@ -350,6 +354,7 @@ pub async fn execute_onboarding_tool(
         "open_gmail_setup_url" | "open_url" => open_gmail_setup_url(tool_input),
         "import_messages" => import_messages(tool_input).await,
         "import_chatgpt_export" => import_chatgpt_export(tool_input).await,
+        "start_portrait_build" => crate::commands::start_portrait_build().await,
         _ => Err(format!("Unknown onboarding tool: {}", tool_name)),
     }
 }
@@ -1607,6 +1612,15 @@ pub fn get_onboarding_tool_definitions() -> Vec<Value> {
                     }
                 },
                 "required": ["source", "method"]
+            }
+        }),
+        json!({
+            "name": "start_portrait_build",
+            "description": "Start building the user's life portrait from their connected data. Runs extraction and synthesis in the background. Only call this after presenting data stats and cost/time estimates and getting the user's explicit confirmation to proceed.",
+            "input_schema": {
+                "type": "object",
+                "properties": {},
+                "required": []
             }
         }),
     ]
