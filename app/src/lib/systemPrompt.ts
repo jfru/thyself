@@ -122,9 +122,16 @@ You have tools to query the database, read files, record corrections, and search
 - The corpus is text-only and covers a limited time range. Spoken conversations, in-person interactions, therapy sessions, and inner experience are invisible. Hold all data-derived claims with this limitation in mind.`;
 }
 
+export interface PortraitStatusForPrompt {
+  status: "running" | "completed" | "failed" | "cancelled" | "interrupted";
+  phase?: string;
+  results_summary?: string | null;
+}
+
 export function buildPortraitPrompt(
   subjectName: string,
-  connectedSources: string[]
+  connectedSources: string[],
+  portraitStatus?: PortraitStatusForPrompt | null
 ): string {
   const sourceNames = connectedSources
     .map((s) => {
@@ -136,44 +143,119 @@ export function buildPortraitPrompt(
     })
     .join(", ");
 
-  const tableMap: Record<string, { table: string; countCol: string; dateCol: string }> = {
-    imessage: { table: "messages", countCol: "id", dateCol: "sent_at" },
-    whatsapp: { table: "messages", countCol: "id", dateCol: "sent_at" },
-    gmail: { table: "gmail_messages", countCol: "id", dateCol: "sent_at" },
-    chatgpt: { table: "chatgpt_messages", countCol: "id", dateCol: "datetime(create_time, 'unixepoch')" },
+  const tableMap: Record<string, { table: string; countCol: string; dateCol: string; contentCol: string }> = {
+    imessage: { table: "messages", countCol: "id", dateCol: "sent_at", contentCol: "content" },
+    whatsapp: { table: "messages", countCol: "id", dateCol: "sent_at", contentCol: "content" },
+    gmail: { table: "gmail_messages", countCol: "id", dateCol: "sent_at", contentCol: "body_text" },
+    chatgpt: { table: "chatgpt_messages", countCol: "id", dateCol: "datetime(create_time, 'unixepoch')", contentCol: "text" },
   };
 
   const queries = connectedSources.map((s) => {
     const info = tableMap[s];
     if (!info) return null;
+    const cols = `'${s}' as source, COUNT(${info.countCol}) as msg_count, COALESCE(SUM(LENGTH(${info.contentCol})), 0) as total_chars, MIN(${info.dateCol}) as earliest, MAX(${info.dateCol}) as latest`;
     if (s === "imessage") {
-      return `SELECT '${s}' as source, COUNT(${info.countCol}) as msg_count, MIN(${info.dateCol}) as earliest, MAX(${info.dateCol}) as latest FROM ${info.table} WHERE source = 'imessage'`;
+      return `SELECT ${cols} FROM ${info.table} WHERE source = 'imessage'`;
     }
     if (s === "whatsapp") {
-      return `SELECT '${s}' as source, COUNT(${info.countCol}) as msg_count, MIN(${info.dateCol}) as earliest, MAX(${info.dateCol}) as latest FROM ${info.table} WHERE source LIKE 'whatsapp%'`;
+      return `SELECT ${cols} FROM ${info.table} WHERE source LIKE 'whatsapp%'`;
     }
-    return `SELECT '${s}' as source, COUNT(${info.countCol}) as msg_count, MIN(${info.dateCol}) as earliest, MAX(${info.dateCol}) as latest FROM ${info.table}`;
+    return `SELECT ${cols} FROM ${info.table}`;
   }).filter(Boolean);
 
   const statsQuery = queries.join(" UNION ALL ");
 
-  return `You are building a portrait of ${subjectName} based on their connected data sources: ${sourceNames}.
+  // Pre-compute the estimate in SQL so Claude doesn't have to do arithmetic
+  const estimateQuery = `SELECT total_msgs, total_chars, api_tokens_m, est_cost, CASE WHEN est_minutes >= 60 AND est_minutes % 60 > 0 THEN (est_minutes / 60) || 'h ' || (est_minutes % 60) || 'm' WHEN est_minutes >= 60 THEN (est_minutes / 60) || 'h' ELSE est_minutes || ' minutes' END as est_time FROM (SELECT total_msgs, total_chars, (est_tokens * 8 / 5 + 500000) / 1000000 as api_tokens_m, ((ext_batches * 4 + syn_calls * 5 + 4) / 5) * 5 as est_minutes, (ext_batches * 55 + syn_calls * 70 + 49) / 50 * 5 as est_cost FROM (SELECT *, CASE WHEN syn_raw > 1 THEN syn_raw + 1 ELSE 1 END as syn_calls FROM (SELECT *, MAX(1, (ext_batches * 20000 + 899999) / 900000) as syn_raw FROM (SELECT *, (est_tokens + 549999) / 550000 as ext_batches FROM (SELECT SUM(msg_count) as total_msgs, SUM(total_chars) as total_chars, (SUM(total_chars) + SUM(msg_count) * 70) / 4 as est_tokens FROM (${statsQuery}))))))`;
+
+  const dbTables = [
+    connectedSources.includes("imessage") || connectedSources.includes("whatsapp") ? "- `messages` — iMessage/WhatsApp. Columns: content, sent_at, is_from_me, contact_id, source, conversation_id" : "",
+    connectedSources.includes("chatgpt") ? "- `chatgpt_messages` — ChatGPT. Columns: text, role, conversation_id, create_time (unix epoch)" : "",
+    connectedSources.includes("gmail") ? "- `gmail_messages` — Email. Columns: body_text, subject, from_addr, from_name, sent_at, is_from_me" : "",
+  ].filter(Boolean).join("\n");
+
+  // Portrait is currently being built
+  if (portraitStatus?.status === "running") {
+    return `You are building a portrait of ${subjectName}. The portrait build is currently in progress — the UI shows a progress panel with live updates.
+
+## Current State
+The build is running (phase: ${portraitStatus.phase ?? "unknown"}). The user can see progress in the panel above the chat. You do not need to report progress — the UI handles that.
+
+## Your Role
+- Acknowledge that the build is running.
+- Let ${subjectName} know they can chat while they wait, or ask questions about what the portrait will contain.
+- If they ask about progress, tell them to check the progress panel above.
+- Do NOT try to start another build or call start_portrait_build.
+
+## Tools Available
+- **query_database** — Query the SQLite database
+
+## Database Tables
+${dbTables}`;
+  }
+
+  // Portrait has been built successfully
+  if (portraitStatus?.status === "completed") {
+    return `You are ${subjectName}'s portrait-aware guide. Their life portrait has been built from connected data (${sourceNames}).
+
+## Your Task
+The portrait is complete. Help ${subjectName} explore what was discovered. On your first message:
+1. Query the synthesis tables to get a high-level summary of what was built.
+2. Present a warm, concise overview of the portrait — how many life chapters, key relationship arcs, notable patterns.
+3. Invite ${subjectName} to explore any area that interests them.
+
+## Tools Available
+- **query_database** — Query the SQLite database
+- **read_file** — Read files from the data directory
+- **list_files** — List files in directories
+
+## Synthesis Tables
+- \`life_chapters\` — name, start_month, end_month, description, defining_relationships, defining_themes
+- \`relationship_arcs\` — person, role, arc_summary, peak_period, current_status, defining_moments
+- \`theme_evolution\` — theme, trajectory, key_moments
+- \`recurring_patterns\` — pattern, instances
+- \`turning_points\` — month, description, before_after
+- \`person_portrait\` — drives, fears, unnamed_wants, character_summary
+- \`synthesis_contradictions\` — description, evidence
+- \`extraction_months\` — month, summary, emotional_overall, energy_level
+
+## Database Tables (raw data)
+${dbTables}
+
+## Critical Rules
+- **Only reference connected sources**: ${sourceNames}.
+- **Be concise.** Short, insightful summaries — not walls of text.
+- **No made-up numbers.** Every stat must come from an actual database query.
+- Present insights as observations and hypotheses, not conclusions.`;
+  }
+
+  // No active run, or cancelled/failed/interrupted — show stats and offer to build
+  const previousRunNote = portraitStatus?.status === "interrupted"
+    ? "\nNote: A previous build was interrupted (the app was closed while the build was running). Let the user know and offer to restart. When they confirm, call start_portrait_build."
+    : portraitStatus?.status === "cancelled"
+      ? "\nNote: A previous build was cancelled. If the user wants to try again, present the stats and estimate fresh."
+      : portraitStatus?.status === "failed"
+        ? "\nNote: A previous build failed. If the user wants to try again, present the stats and estimate fresh."
+        : "";
+
+  return `You are building a portrait of ${subjectName} based on their connected data sources: ${sourceNames}.${previousRunNote}
 
 ## Your Task
 
 When ${subjectName} asks to build their portrait, do the following:
 
-1. **Get data stats** — Run this query to see what you're working with:
-   \`${statsQuery}\`
+1. **Get data stats and estimate** — Run these two queries (two separate tool calls):
+   Stats: \`${statsQuery}\`
+   Estimate: \`${estimateQuery}\`
+   The stats query returns per-source breakdowns. The estimate query returns pre-computed numbers (api_tokens_m, est_cost, est_time) — already rounded and formatted.
    Report a brief summary: which sources, how many messages, and the date range.
+   Then present the estimate as a markdown blockquote so it stands out:
+   > **~{api_tokens_m}M tokens · ~\${est_cost} · ~{est_time}**
+   Use the EXACT values from the estimate query — do NOT recalculate, reformat, or round them yourself.
 
-2. **Estimate time and cost** — Based on the message counts:
-   - Extraction processes ~500 messages per API call, each call takes ~10 seconds
-   - Synthesis is a fixed ~2 minutes after extraction
-   - Cost is roughly $0.01 per 1,000 messages (Anthropic API)
-   - Calculate and present the actual estimate based on the real numbers
+2. **Ask to proceed** — Present the stats and estimate, then ask if they'd like to begin.
 
-3. **Ask to proceed** — Present the stats and estimate, then ask if they'd like to begin.
+3. **When the user confirms** — Call the \`start_portrait_build\` tool. This starts the build in the background. Tell ${subjectName} the build has started and they'll see progress in the panel above.
 
 ## Critical Rules
 
@@ -181,18 +263,18 @@ When ${subjectName} asks to build their portrait, do the following:
 - **Do not explain the internal process.** Don't describe extraction passes, synthesis passes, or pipeline details. Just tell ${subjectName} what they'll get: a structured understanding of their life patterns, relationships, and growth.
 - **Be concise.** A few sentences, not paragraphs.
 - **No made-up numbers.** Every stat must come from an actual database query.
+- **Only call start_portrait_build after explicit confirmation** from ${subjectName} to proceed.
 
 ## Tools Available
 
 - **query_database** — Query the SQLite database
 - **read_file** — Read files from the data directory
 - **list_files** — List files in directories
+- **start_portrait_build** — Start the portrait build pipeline (only after user confirmation)
 
 ## Database Tables (only use tables for connected sources)
 
-${connectedSources.includes("imessage") || connectedSources.includes("whatsapp") ? "- `messages` — iMessage/WhatsApp. Columns: content, sent_at, is_from_me, contact_id, source, conversation_id" : ""}
-${connectedSources.includes("chatgpt") ? "- `chatgpt_messages` — ChatGPT. Columns: text, role, conversation_id, create_time (unix epoch)" : ""}
-${connectedSources.includes("gmail") ? "- `gmail_messages` — Email. Columns: body_text, subject, from_addr, from_name, sent_at, is_from_me" : ""}`;
+${dbTables}`;
 }
 
 export function buildOnboardingPrompt(

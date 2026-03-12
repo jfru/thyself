@@ -53,6 +53,28 @@ pub fn cleanup_stale_sync_runs(conn: &Connection) {
     );
 }
 
+/// Mark any portrait_runs stuck in "running" as interrupted.
+/// Called on startup so the UI can offer to resume.
+pub fn cleanup_stale_portrait_runs(conn: &Connection) {
+    let has_table: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='portrait_runs'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|c| c > 0)
+        .unwrap_or(false);
+
+    if !has_table {
+        return;
+    }
+
+    let _ = conn.execute(
+        "UPDATE portrait_runs SET status = 'interrupted', error_message = 'App closed during build', updated_at = datetime('now') WHERE status = 'running'",
+        [],
+    );
+}
+
 pub fn query_rows(conn: &Connection, sql: &str, params: &[Value]) -> Result<Value, String> {
     let bound: Vec<String> = params
         .iter()

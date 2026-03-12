@@ -91,6 +91,7 @@ pub async fn cmd_switch_profile(
 
     let new_conn = crate::db::open_db_for_profile(&profile.data_dir)?;
     crate::db::cleanup_stale_sync_runs(&new_conn);
+    crate::db::cleanup_stale_portrait_runs(&new_conn);
     let mut guard = state.conn.lock().map_err(|e| e.to_string())?;
     *guard = Some(new_conn);
 
@@ -1001,6 +1002,240 @@ pub async fn read_dropped_files(paths: Vec<String>) -> Result<Value, String> {
     }
 
     Ok(json!({ "images": images, "files": files }))
+}
+
+// ---------------------------------------------------------------------------
+// Portrait build commands
+// ---------------------------------------------------------------------------
+
+static RUNNING_PORTRAIT: std::sync::LazyLock<std::sync::Mutex<Option<u32>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
+
+fn ensure_portrait_runs_table(conn: &rusqlite::Connection) -> Result<(), String> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS portrait_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            status TEXT NOT NULL DEFAULT 'running',
+            phase TEXT NOT NULL DEFAULT 'preparing',
+            total_batches INTEGER,
+            completed_batches INTEGER DEFAULT 0,
+            synthesis_batches INTEGER,
+            synthesis_completed INTEGER DEFAULT 0,
+            error_message TEXT,
+            started_at DATETIME NOT NULL,
+            updated_at DATETIME,
+            finished_at DATETIME,
+            extraction_months_covered TEXT,
+            results_summary TEXT
+        )"
+    ).map_err(|e| format!("Failed to create portrait_runs table: {}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn start_portrait_build() -> Result<Value, String> {
+    let data_dir = profiles::get_active_data_dir();
+    let db_path = data_dir.join("thyself.db");
+
+    let conn = rusqlite::Connection::open(&db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    ensure_portrait_runs_table(&conn)?;
+
+    // Cancel any stale running portrait builds
+    conn.execute(
+        "UPDATE portrait_runs SET status = 'failed', error_message = 'Superseded by new build', finished_at = datetime('now') WHERE status = 'running'",
+        [],
+    ).map_err(|e| format!("Failed to supersede existing runs: {}", e))?;
+
+    conn.execute(
+        "INSERT INTO portrait_runs (status, phase, started_at) VALUES ('running', 'preparing', datetime('now'))",
+        [],
+    ).map_err(|e| format!("Failed to create portrait run: {}", e))?;
+    let run_id = conn.last_insert_rowid();
+    drop(conn);
+
+    let project_root = onboarding_tools::find_project_root_pub()
+        .ok_or("Could not find project root (config.py not found)")?;
+
+    let api_key = profiles::get_active_api_key()
+        .ok_or_else(|| "No API key configured".to_string())?;
+    let subject_name = profiles::get_active_subject_name();
+
+    let mut cmd = tokio::process::Command::new("python3");
+    cmd.arg("-u")
+        .arg("-m")
+        .arg("extraction.portrait_build")
+        .arg("--run-id")
+        .arg(run_id.to_string())
+        .arg("--db-path")
+        .arg(db_path.display().to_string())
+        .env("THYSELF_DATA_DIR", data_dir.display().to_string())
+        .env("ANTHROPIC_API_KEY", &api_key)
+        .env("THYSELF_SUBJECT_NAME", &subject_name)
+        .current_dir(&project_root)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("Failed to spawn portrait build: {}", e))?;
+
+    if let Some(pid) = child.id() {
+        *RUNNING_PORTRAIT.lock().unwrap() = Some(pid);
+    }
+
+    let db_for_monitor = db_path.clone();
+    let run_id_for_monitor = run_id;
+    tokio::spawn(async move {
+        let stdout_pipe = child.stdout.take();
+        let stderr_pipe = child.stderr.take();
+
+        let stdout_task = tokio::spawn(async move {
+            if let Some(pipe) = stdout_pipe {
+                let mut out = String::new();
+                let mut reader = tokio::io::BufReader::new(pipe);
+                let mut buf = String::new();
+                use tokio::io::AsyncBufReadExt;
+                while reader.read_line(&mut buf).await.unwrap_or(0) > 0 {
+                    out.push_str(&buf);
+                    buf.clear();
+                }
+                out
+            } else {
+                String::new()
+            }
+        });
+
+        let stderr_task = tokio::spawn(async move {
+            if let Some(pipe) = stderr_pipe {
+                let mut err = String::new();
+                let mut reader = tokio::io::BufReader::new(pipe);
+                let mut buf = String::new();
+                use tokio::io::AsyncBufReadExt;
+                while reader.read_line(&mut buf).await.unwrap_or(0) > 0 {
+                    err.push_str(&buf);
+                    buf.clear();
+                }
+                err
+            } else {
+                String::new()
+            }
+        });
+
+        let status = child.wait().await;
+        *RUNNING_PORTRAIT.lock().unwrap() = None;
+
+        let _stdout = stdout_task.await.unwrap_or_default();
+        let stderr = stderr_task.await.unwrap_or_default();
+
+        if let Ok(exit) = status {
+            if !exit.success() {
+                if let Ok(conn) = rusqlite::Connection::open(&db_for_monitor) {
+                    let current_status: Option<String> = conn
+                        .query_row(
+                            "SELECT status FROM portrait_runs WHERE id = ?1",
+                            [run_id_for_monitor],
+                            |row| row.get(0),
+                        )
+                        .ok();
+                    if current_status.as_deref() == Some("running") {
+                        let err_msg = if stderr.is_empty() {
+                            format!("Process exited with code {}", exit.code().unwrap_or(-1))
+                        } else {
+                            stderr.chars().take(2000).collect()
+                        };
+                        let _ = conn.execute(
+                            "UPDATE portrait_runs SET status = 'failed', error_message = ?1, finished_at = datetime('now') WHERE id = ?2",
+                            rusqlite::params![err_msg, run_id_for_monitor],
+                        );
+                    }
+                }
+            }
+        }
+    });
+
+    Ok(json!({
+        "run_id": run_id,
+        "status": "started"
+    }))
+}
+
+#[tauri::command]
+pub async fn cancel_portrait_build() -> Result<Value, String> {
+    let pid = {
+        let mut guard = RUNNING_PORTRAIT.lock().unwrap();
+        guard.take()
+    };
+
+    if let Some(pid) = pid {
+        unsafe {
+            libc::kill(pid as i32, libc::SIGTERM);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+
+    let data_dir = profiles::get_active_data_dir();
+    let db_path = data_dir.join("thyself.db");
+
+    if let Ok(conn) = rusqlite::Connection::open(&db_path) {
+        let _ = conn.execute(
+            "UPDATE portrait_runs SET status = 'cancelled', finished_at = datetime('now') WHERE status = 'running'",
+            [],
+        );
+    }
+
+    Ok(json!({ "status": "cancelled" }))
+}
+
+#[tauri::command]
+pub async fn get_portrait_status(state: State<'_, DbState>) -> Result<Value, String> {
+    let guard = state.conn.lock().map_err(|e| e.to_string())?;
+    let conn = match guard.as_ref() {
+        Some(c) => c,
+        None => return Ok(Value::Null),
+    };
+
+    let table_exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='portrait_runs'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|c| c > 0)
+        .unwrap_or(false);
+
+    if !table_exists {
+        return Ok(Value::Null);
+    }
+
+    let result = conn.query_row(
+        "SELECT id, status, phase, total_batches, completed_batches, synthesis_batches, synthesis_completed, error_message, started_at, updated_at, finished_at, extraction_months_covered, results_summary
+         FROM portrait_runs ORDER BY id DESC LIMIT 1",
+        [],
+        |row| {
+            Ok(json!({
+                "id": row.get::<_, i64>(0)?,
+                "status": row.get::<_, String>(1)?,
+                "phase": row.get::<_, String>(2)?,
+                "total_batches": row.get::<_, Option<i64>>(3)?,
+                "completed_batches": row.get::<_, Option<i64>>(4)?,
+                "synthesis_batches": row.get::<_, Option<i64>>(5)?,
+                "synthesis_completed": row.get::<_, Option<i64>>(6)?,
+                "error_message": row.get::<_, Option<String>>(7)?,
+                "started_at": row.get::<_, Option<String>>(8)?,
+                "updated_at": row.get::<_, Option<String>>(9)?,
+                "finished_at": row.get::<_, Option<String>>(10)?,
+                "extraction_months_covered": row.get::<_, Option<String>>(11)?,
+                "results_summary": row.get::<_, Option<String>>(12)?,
+            }))
+        },
+    );
+
+    match result {
+        Ok(val) => Ok(val),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(Value::Null),
+        Err(e) => Err(format!("Failed to query portrait status: {}", e)),
+    }
 }
 
 // #region agent log
