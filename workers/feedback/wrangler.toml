@@ -1,0 +1,7 @@
+name = "thyself-feedback"
+main = "index.ts"
+compatibility_date = "2024-12-01"
+
+[[kv_namespaces]]
+binding = "FEEDBACK_CONTACTS"
+id = "81e4f2e688cb40e29339a9d316e3bb9d"
