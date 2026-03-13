@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { invokeCommand } from "../lib/tauriBridge";
-import { Plus, MessageSquare, PanelLeftClose, PanelLeft, User, ChevronDown, ChevronRight, Trash2, Settings, Sparkles, Loader2, MessageSquareHeart } from "lucide-react";
+import { Plus, MessageSquare, PanelLeftClose, PanelLeft, User, ChevronDown, ChevronRight, Trash2, Settings, Sparkles, Loader2, MessageSquareHeart, CreditCard } from "lucide-react";
 import { FeedbackModal } from "./FeedbackModal";
 import type { SessionMeta, Profile } from "../lib/types";
 
@@ -85,6 +85,21 @@ export function SessionSidebar({
   function handleNewProfile() {
     setShowProfileMenu(false);
     onNewProfile();
+  }
+
+  async function handleManageSubscription() {
+    const token = profile.auth_token;
+    if (!token) return;
+    try {
+      const result = await invokeCommand<{ url: string }>(
+        "cmd_create_portal_session",
+        { authToken: token }
+      );
+      if (result.url) window.open(result.url, "_blank");
+    } catch (err) {
+      console.error("Failed to open billing portal:", err);
+    }
+    setShowProfileMenu(false);
   }
 
   function formatDate(iso: string): string {
@@ -382,9 +397,18 @@ export function SessionSidebar({
                 )}
               </div>
             ))}
+            {profile.auth_token && (
+              <button
+                onClick={handleManageSubscription}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200 transition-colors border-t border-zinc-800"
+              >
+                <CreditCard size={12} />
+                Manage subscription
+              </button>
+            )}
             <button
               onClick={handleNewProfile}
-              className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200 transition-colors border-t border-zinc-800"
+              className={`flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200 transition-colors ${!profile.auth_token ? "border-t border-zinc-800" : ""}`}
             >
               <Plus size={12} />
               New profile

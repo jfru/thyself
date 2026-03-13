@@ -57,7 +57,7 @@ pub async fn list_profiles() -> Result<Value, String> {
 pub async fn cmd_create_profile(
     state: State<'_, DbState>,
     name: String,
-    api_key: String,
+    api_key: Option<String>,
     subject_name: String,
     email: Option<String>,
     selected_sources: Vec<String>,
@@ -129,6 +129,7 @@ pub async fn cmd_update_profile(
     api_key: Option<String>,
     subject_name: Option<String>,
     email: Option<String>,
+    auth_token: Option<String>,
 ) -> Result<Value, String> {
     let profile = profiles::update_profile(
         &profile_id,
@@ -137,6 +138,7 @@ pub async fn cmd_update_profile(
         api_key,
         subject_name,
         email,
+        auth_token,
     )?;
     Ok(serde_json::to_value(&profile).map_err(|e| e.to_string())?)
 }
@@ -272,6 +274,7 @@ pub async fn cmd_remove_data_source(
         None,
         None,
         None,
+        None,
     )?;
 
     Ok(json!({
@@ -320,6 +323,109 @@ pub async fn validate_api_key(api_key: String) -> Result<Value, String> {
     } else {
         let body = resp.text().await.unwrap_or_default();
         Ok(json!({"valid": false, "error": format!("Unexpected response ({}): {}", status, body)}))
+    }
+}
+
+const THYSELF_API_URL: &str = "https://thyself-api.jfru.workers.dev";
+
+#[tauri::command]
+pub async fn cmd_send_auth_code(email: String) -> Result<Value, String> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{}/auth/send-code", THYSELF_API_URL))
+        .header("content-type", "application/json")
+        .json(&json!({"email": email}))
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    let status = resp.status();
+    let body: Value = resp.json().await.map_err(|e| format!("Parse error: {}", e))?;
+    if status.is_success() {
+        Ok(body)
+    } else {
+        Err(body["error"].as_str().unwrap_or("Failed to send code").to_string())
+    }
+}
+
+#[tauri::command]
+pub async fn cmd_verify_auth_code(email: String, code: String) -> Result<Value, String> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{}/auth/verify", THYSELF_API_URL))
+        .header("content-type", "application/json")
+        .json(&json!({"email": email, "code": code}))
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    let status = resp.status();
+    let body: Value = resp.json().await.map_err(|e| format!("Parse error: {}", e))?;
+    if status.is_success() {
+        Ok(body)
+    } else {
+        Err(body["error"].as_str().unwrap_or("Verification failed").to_string())
+    }
+}
+
+#[tauri::command]
+pub async fn cmd_check_subscription(auth_token: String) -> Result<Value, String> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{}/auth/me", THYSELF_API_URL))
+        .header("Authorization", format!("Bearer {}", auth_token))
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    let status = resp.status();
+    let body: Value = resp.json().await.map_err(|e| format!("Parse error: {}", e))?;
+    if status.is_success() {
+        Ok(body)
+    } else {
+        Err(body["error"].as_str().unwrap_or("Auth check failed").to_string())
+    }
+}
+
+#[tauri::command]
+pub async fn cmd_create_checkout(auth_token: String) -> Result<Value, String> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{}/billing/checkout", THYSELF_API_URL))
+        .header("Authorization", format!("Bearer {}", auth_token))
+        .header("content-type", "application/json")
+        .json(&json!({}))
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    let status = resp.status();
+    let body: Value = resp.json().await.map_err(|e| format!("Parse error: {}", e))?;
+    if status.is_success() {
+        Ok(body)
+    } else {
+        Err(body["error"].as_str().unwrap_or("Failed to create checkout").to_string())
+    }
+}
+
+#[tauri::command]
+pub async fn cmd_create_portal_session(auth_token: String) -> Result<Value, String> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{}/billing/portal", THYSELF_API_URL))
+        .header("Authorization", format!("Bearer {}", auth_token))
+        .header("content-type", "application/json")
+        .json(&json!({}))
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    let status = resp.status();
+    let body: Value = resp.json().await.map_err(|e| format!("Parse error: {}", e))?;
+    if status.is_success() {
+        Ok(body)
+    } else {
+        Err(body["error"].as_str().unwrap_or("Failed to create portal session").to_string())
     }
 }
 
@@ -427,8 +533,9 @@ pub async fn run_chat_loop(
     stream_id: String,
     cancel: Option<Arc<AtomicBool>>,
 ) -> Result<Value, String> {
-    let api_key = profiles::get_active_api_key()
-        .ok_or_else(|| "No API key configured. Please complete onboarding.".to_string())?;
+    let api_key = profiles::get_active_auth_token()
+        .or_else(|| profiles::get_active_api_key())
+        .ok_or_else(|| "Not signed in. Please sign in to use Thyself.".to_string())?;
 
     let mut tool_defs = if tools.is_empty() {
         get_tool_definitions()

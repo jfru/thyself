@@ -3,7 +3,8 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-const CLAUDE_API_URL: &str = "https://api.anthropic.com/v1/messages";
+const PROXY_API_URL: &str = "https://thyself-api.jfru.workers.dev/v1/messages";
+const DIRECT_API_URL: &str = "https://api.anthropic.com/v1/messages";
 const DEFAULT_MODEL: &str = "claude-sonnet-4-20250514";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -12,12 +13,12 @@ pub struct StreamEvent {
     pub data: Value,
 }
 
-/// Streams a chat request to the Claude API.
-/// `emit_fn` is called for each SSE event — callers provide the transport
-/// (Tauri app.emit, HTTP SSE channel, etc.).
+/// Streams a chat request to the Claude API via the Thyself proxy.
+/// If `auth_token` starts with "sk-ant-" it's treated as a direct Anthropic
+/// API key (legacy/dev); otherwise it's a JWT routed through the proxy.
 pub async fn stream_chat_request(
     emit_fn: &(dyn Fn(&str, &str, &Value) + Send + Sync),
-    api_key: &str,
+    auth_token: &str,
     messages: Vec<Value>,
     system_prompt: &str,
     tools: Vec<Value>,
@@ -42,9 +43,16 @@ pub async fn stream_chat_request(
         body["tools"] = Value::Array(tools);
     }
 
+    let is_direct = auth_token.starts_with("sk-ant-");
+    let (url, auth_header_name, auth_header_value) = if is_direct {
+        (DIRECT_API_URL, "x-api-key", auth_token.to_string())
+    } else {
+        (PROXY_API_URL, "Authorization", format!("Bearer {}", auth_token))
+    };
+
     let response = client
-        .post(CLAUDE_API_URL)
-        .header("x-api-key", api_key)
+        .post(url)
+        .header(auth_header_name, &auth_header_value)
         .header("anthropic-version", "2023-06-01")
         .header("anthropic-beta", "interleaved-thinking-2025-05-14")
         .header("content-type", "application/json")

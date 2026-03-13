@@ -1,49 +1,161 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { invokeCommand } from "../lib/tauriBridge";
-import { Loader2, CheckCircle, XCircle, ArrowRight } from "lucide-react";
+import { Loader2, ArrowRight, Mail } from "lucide-react";
 
 interface OnboardingWelcomeProps {
-  onNext: (name: string, apiKey: string) => void;
+  onNext: (name: string, email: string, authToken: string) => void;
 }
+
+type Step = "info" | "code-sent" | "verified";
 
 export function OnboardingWelcome({ onNext }: OnboardingWelcomeProps) {
   const [name, setName] = useState("");
-  const [apiKey, setApiKey] = useState("");
-  const [validating, setValidating] = useState(false);
-  const [keyStatus, setKeyStatus] = useState<"idle" | "valid" | "invalid">("idle");
+  const [email, setEmail] = useState("");
+  const [step, setStep] = useState<Step>("info");
+  const [code, setCode] = useState(["", "", "", "", "", ""]);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [authToken, setAuthToken] = useState<string | null>(null);
+  const codeRefs = useRef<(HTMLInputElement | null)[]>([]);
 
-  async function handleValidate() {
-    if (!apiKey.trim()) return;
-    setValidating(true);
+  useEffect(() => {
+    if (step === "code-sent") {
+      codeRefs.current[0]?.focus();
+    }
+  }, [step]);
+
+  async function handleSendCode() {
+    if (!email.trim() || !name.trim()) return;
+    setLoading(true);
     setError(null);
-    setKeyStatus("idle");
 
     try {
-      const result = await invokeCommand<{ valid: boolean; error?: string }>(
-        "validate_api_key",
-        { apiKey: apiKey.trim() }
-      );
-      if (result.valid) {
-        setKeyStatus("valid");
-      } else {
-        setKeyStatus("invalid");
-        setError(result.error || "Invalid API key");
-      }
+      await invokeCommand("cmd_send_auth_code", { email: email.trim().toLowerCase() });
+      setStep("code-sent");
     } catch (err) {
-      setKeyStatus("invalid");
-      setError(err instanceof Error ? err.message : "Validation failed");
+      setError(err instanceof Error ? err.message : "Failed to send code");
     } finally {
-      setValidating(false);
+      setLoading(false);
     }
   }
 
-  function handleContinue() {
-    if (!name.trim() || keyStatus !== "valid") return;
-    onNext(name.trim(), apiKey.trim());
+  async function handleVerifyCode(fullCode: string) {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const result = await invokeCommand<{ token: string; user: { subscription_status: string } }>(
+        "cmd_verify_auth_code",
+        { email: email.trim().toLowerCase(), code: fullCode }
+      );
+      setAuthToken(result.token);
+      setStep("verified");
+      setTimeout(() => {
+        onNext(name.trim(), email.trim().toLowerCase(), result.token);
+      }, 600);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Invalid code");
+      setCode(["", "", "", "", "", ""]);
+      codeRefs.current[0]?.focus();
+    } finally {
+      setLoading(false);
+    }
   }
 
-  const canContinue = name.trim().length > 0 && keyStatus === "valid";
+  function handleCodeInput(index: number, value: string) {
+    if (!/^\d*$/.test(value)) return;
+    const next = [...code];
+    next[index] = value.slice(-1);
+    setCode(next);
+
+    if (value && index < 5) {
+      codeRefs.current[index + 1]?.focus();
+    }
+
+    const fullCode = next.join("");
+    if (fullCode.length === 6) {
+      handleVerifyCode(fullCode);
+    }
+  }
+
+  function handleCodeKeyDown(index: number, e: React.KeyboardEvent) {
+    if (e.key === "Backspace" && !code[index] && index > 0) {
+      codeRefs.current[index - 1]?.focus();
+    }
+  }
+
+  function handleCodePaste(e: React.ClipboardEvent) {
+    const pasted = e.clipboardData.getData("text").replace(/\D/g, "").slice(0, 6);
+    if (pasted.length === 6) {
+      e.preventDefault();
+      const next = pasted.split("");
+      setCode(next);
+      handleVerifyCode(pasted);
+    }
+  }
+
+  if (step === "code-sent" || step === "verified") {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-zinc-950 px-6">
+        <div className="w-full max-w-md space-y-8">
+          <div className="text-center space-y-3">
+            <div className="w-12 h-12 rounded-full bg-blue-500/10 flex items-center justify-center mx-auto">
+              <Mail size={24} className="text-blue-400" />
+            </div>
+            <h1 className="text-2xl font-semibold text-zinc-100">
+              Check your email
+            </h1>
+            <p className="text-sm text-zinc-400 leading-relaxed">
+              We sent a 6-digit code to <span className="text-zinc-200 font-medium">{email}</span>
+            </p>
+          </div>
+
+          <div className="flex justify-center gap-2">
+            {code.map((digit, i) => (
+              <input
+                key={i}
+                ref={(el) => { codeRefs.current[i] = el; }}
+                type="text"
+                inputMode="numeric"
+                maxLength={1}
+                value={digit}
+                onChange={(e) => handleCodeInput(i, e.target.value)}
+                onKeyDown={(e) => handleCodeKeyDown(i, e)}
+                onPaste={i === 0 ? handleCodePaste : undefined}
+                disabled={loading || step === "verified"}
+                className="w-12 h-14 text-center text-xl font-semibold rounded-lg bg-zinc-900 border border-zinc-700 text-zinc-100 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors disabled:opacity-50"
+              />
+            ))}
+          </div>
+
+          {error && (
+            <p className="text-xs text-red-400 text-center">{error}</p>
+          )}
+
+          {loading && (
+            <div className="flex justify-center">
+              <Loader2 size={20} className="animate-spin text-zinc-400" />
+            </div>
+          )}
+
+          {step === "verified" && (
+            <p className="text-sm text-green-400 text-center font-medium">Verified!</p>
+          )}
+
+          <button
+            onClick={() => {
+              setStep("info");
+              setCode(["", "", "", "", "", ""]);
+              setError(null);
+            }}
+            className="w-full text-sm text-zinc-500 hover:text-zinc-300 transition-colors text-center"
+          >
+            Use a different email
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-zinc-950 px-6">
@@ -74,76 +186,52 @@ export function OnboardingWelcome({ onNext }: OnboardingWelcomeProps) {
 
           <div className="space-y-2">
             <label className="block text-sm font-medium text-zinc-300">
-              Anthropic API key
+              Your email
             </label>
             <p className="text-xs text-zinc-500">
-              Get one at{" "}
-              <a
-                href="https://console.anthropic.com/settings/keys"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-blue-400 hover:text-blue-300 underline transition-colors"
-              >
-                console.anthropic.com
-              </a>
+              We'll send a verification code to sign you in.
             </p>
-            <div className="relative">
-              <input
-                type="password"
-                value={apiKey}
-                onChange={(e) => {
-                  setApiKey(e.target.value);
-                  setKeyStatus("idle");
-                  setError(null);
-                }}
-                placeholder="sk-ant-..."
-                className="w-full rounded-lg bg-zinc-900 border border-zinc-700 px-4 py-3 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors pr-12"
-              />
-              {keyStatus === "valid" && (
-                <CheckCircle
-                  size={18}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-green-400"
-                />
-              )}
-              {keyStatus === "invalid" && (
-                <XCircle
-                  size={18}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-red-400"
-                />
-              )}
-            </div>
-
-            {error && (
-              <p className="text-xs text-red-400">{error}</p>
-            )}
-
-            {keyStatus !== "valid" && (
-              <button
-                onClick={handleValidate}
-                disabled={!apiKey.trim() || validating}
-                className="w-full rounded-lg bg-zinc-800 px-4 py-2.5 text-sm font-medium text-zinc-200 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
-              >
-                {validating ? (
-                  <>
-                    <Loader2 size={14} className="animate-spin" />
-                    Validating...
-                  </>
-                ) : (
-                  "Validate key"
-                )}
-              </button>
-            )}
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => {
+                setEmail(e.target.value);
+                setError(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleSendCode();
+              }}
+              placeholder="you@example.com"
+              className="w-full rounded-lg bg-zinc-900 border border-zinc-700 px-4 py-3 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
+            />
           </div>
         </div>
 
+        {error && (
+          <p className="text-xs text-red-400">{error}</p>
+        )}
+
         <button
-          onClick={handleContinue}
-          disabled={!canContinue}
+          onClick={handleSendCode}
+          disabled={!name.trim() || !email.trim() || loading}
           className="w-full rounded-lg bg-blue-600 px-4 py-3 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
         >
-          Continue
-          <ArrowRight size={16} />
+          {loading ? (
+            <>
+              <Loader2 size={14} className="animate-spin" />
+              Sending code...
+            </>
+          ) : (
+            <>
+              Continue
+              <ArrowRight size={16} />
+            </>
+          )}
         </button>
+
+        <p className="text-xs text-zinc-600 text-center leading-relaxed">
+          $4.99/month + AI usage costs. Cancel anytime.
+        </p>
       </div>
     </div>
   );
