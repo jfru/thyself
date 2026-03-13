@@ -1,17 +1,18 @@
 import { useState, useRef, useEffect } from "react";
-import { Folder, FileText } from "lucide-react";
-import type { ImageAttachment, FileAttachment } from "../lib/types";
+import { Folder, FileText, MessageSquare } from "lucide-react";
+import type { ImageAttachment, FileAttachment, ContextAttachment } from "../lib/types";
 
 interface UserMessageProps {
   content: string;
   images?: ImageAttachment[];
   files?: FileAttachment[];
+  context?: ContextAttachment[];
   timestamp: number;
 }
 
 const COLLAPSED_MAX = 88;
 
-export function UserMessage({ content, images, files, timestamp }: UserMessageProps) {
+export function UserMessage({ content, images, files, context, timestamp }: UserMessageProps) {
   const [expanded, setExpanded] = useState(false);
   const [needsTruncation, setNeedsTruncation] = useState(false);
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
@@ -32,6 +33,7 @@ export function UserMessage({ content, images, files, timestamp }: UserMessagePr
   const isCollapsed = needsTruncation && !expanded;
   const hasImages = images && images.length > 0;
   const hasFiles = files && files.length > 0;
+  const hasContext = context && context.length > 0;
 
   return (
     <>
@@ -80,6 +82,22 @@ export function UserMessage({ content, images, files, timestamp }: UserMessagePr
                     <FileText size={13} className="text-zinc-400 flex-shrink-0" />
                   )}
                   <span className="max-w-[200px] truncate">{f.name}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {hasContext && (
+            <div className="flex flex-wrap gap-2 mb-2">
+              {context.map((c, idx) => (
+                <div
+                  key={idx}
+                  className="flex items-center gap-1.5 rounded-lg border border-blue-500/30 bg-blue-500/10 px-2.5 py-1.5 text-xs text-blue-300"
+                >
+                  <MessageSquare size={13} className="text-blue-400 flex-shrink-0" />
+                  <span className="max-w-[200px] truncate">@{c.name}</span>
+                  {c.preview && (
+                    <span className="text-blue-400/50">{c.preview}</span>
+                  )}
                 </div>
               ))}
             </div>

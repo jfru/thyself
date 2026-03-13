@@ -7,7 +7,7 @@ import { SubscriptionGate } from "./components/SubscriptionGate";
 import { DataSourceGrid } from "./components/DataSourceGrid";
 import { useStreamChat } from "./hooks/useStreamChat";
 import { invokeCommand } from "./lib/tauriBridge";
-import type { SessionMeta, Message, SystemMessage, Profile, ImageAttachment, FileAttachment } from "./lib/types";
+import type { SessionMeta, Message, SystemMessage, Profile, ImageAttachment, FileAttachment, ContextAttachment } from "./lib/types";
 
 type AppPhase =
   | { kind: "loading" }
@@ -700,7 +700,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
     async (
       text: string,
       images?: ImageAttachment[],
-      options?: { selectedSourcesOverride?: string[] },
+      options?: { selectedSourcesOverride?: string[]; context?: ContextAttachment[] },
       files?: FileAttachment[]
     ) => {
       if (text === OPEN_SETUP_ACTION) {
@@ -768,6 +768,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
       await sendMessage(text, images, {
         sessionKind: kind ?? "conversation",
         selectedSourcesOverride: options?.selectedSourcesOverride,
+        context: options?.context,
       }, files);
     },
     [

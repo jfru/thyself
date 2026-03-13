@@ -120,6 +120,7 @@ export function MessageList({ messages, isStreaming, onAction }: MessageListProp
               content={um.content}
               images={um.images}
               files={um.files}
+              context={um.context}
               timestamp={um.timestamp}
             />
           );
