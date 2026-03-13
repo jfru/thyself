@@ -175,9 +175,36 @@ The AI in the app has access to these tools (defined in `tools.rs`):
 - `list_files` — list files matching a glob pattern
 - `write_correction` — insert a correction into the corrections table
 
+## Splash Website (thyself.fyi)
+
+The marketing/landing page lives in `splash/` — a single `index.html` with inline CSS and JS. No build step.
+
+**Hosting:** Cloudflare Pages, project name `thyself-splash`. Custom domain `thyself.fyi`.
+
+**Deploy command:**
+```bash
+CLOUDFLARE_API_TOKEN="..." CLOUDFLARE_ACCOUNT_ID="..." wrangler pages deploy splash --project-name thyself-splash --commit-dirty=true
+```
+
+Both `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` are in the project `.env` file. There is no auto-deploy from GitHub — deploys are manual via wrangler.
+
+**Assets in `splash/`:**
+- `index.html` — landing page with OG meta tags, favicon links, download button
+- `favicon.ico`, `favicon-32.png` — browser tab icons
+- `apple-touch-icon.png` — 180x180 iOS bookmark icon
+- `og-image.png` — 1200x630 Open Graph image for WhatsApp/iMessage/Twitter link previews
+
+## CI/CD
+
+**App releases:** `.github/workflows/release.yml` runs on every push to `main` (unless commit message contains `[skip ci]`). Builds a signed+notarized macOS .dmg via `tauri-apps/tauri-action`, creates a GitHub Release. The splash page download button fetches the latest release .dmg via the GitHub API.
+
+**Website:** No CI — deploy manually with `wrangler pages deploy` (see above).
+
 ## Environment
 
 Required in `.env` at project root:
 - `ANTHROPIC_API_KEY` — Claude API key
 - `THYSELF_SUBJECT_NAME` — the user's name (used in system prompt)
 - `THYSELF_DATA_DIR` — path to data directory (optional, defaults to `~/Library/Application Support/Thyself`)
+- `CLOUDFLARE_API_TOKEN` — for deploying the splash site
+- `CLOUDFLARE_ACCOUNT_ID` — Cloudflare account ID
