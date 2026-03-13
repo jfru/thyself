@@ -210,6 +210,7 @@ export function ChatView({
           pendingDroppedFiles={pendingFiles}
           onConsumeDroppedFiles={handleConsumeDroppedFiles}
           isTauriDragging={isDraggingOver}
+          placeholder={activeSessionKind === "setup" ? "Message thyself..." : undefined}
         />
       )}
     </div>

@@ -3,6 +3,12 @@ import { invokeCommand } from "../lib/tauriBridge";
 import { SyncHistoryModal } from "./SyncHistoryModal";
 import type { SyncStatus } from "../lib/types";
 
+function compactNumber(n: number): string {
+  if (n >= 1_000_000) return Math.round(n / 1_000_000) + "m";
+  if (n >= 1_000) return Math.round(n / 1_000) + "k";
+  return n.toString();
+}
+
 function timeAgo(iso: string | null): string {
   if (!iso) return "never";
   const ms = Date.now() - new Date(iso + "Z").getTime();
@@ -79,7 +85,7 @@ export function SyncStatusIndicator() {
         <span className={`w-1.5 h-1.5 rounded-full ${dotColor}`} />
         <span>
           {anyRunning ? "Syncing..." : "Last sync:"} {timeAgo(mostRecent?.started_at ?? null)}
-          {totalMessages > 0 && ` — ${totalMessages} msgs`}
+          {totalMessages > 0 && ` — ${compactNumber(totalMessages)} msgs`}
         </span>
         {failedSources.length > 0 && (
           <span className="text-amber-400">
