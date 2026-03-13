@@ -53,6 +53,17 @@ export const markdownComponents: Partial<Components> = {
     );
   },
   a({ href, children }) {
+    if (href?.startsWith("thyself:")) {
+      const action = href.slice("thyself:".length);
+      return (
+        <button
+          onClick={() => window.dispatchEvent(new CustomEvent("thyself-action", { detail: action }))}
+          className="inline-flex items-center gap-1.5 mt-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-500 rounded-lg transition-colors"
+        >
+          {children}
+        </button>
+      );
+    }
     return (
       <a
         href={href}

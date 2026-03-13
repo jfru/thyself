@@ -1,4 +1,4 @@
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import type { TextBlock } from "../lib/types";
@@ -20,6 +20,7 @@ export function StreamingText({ block }: StreamingTextProps) {
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeHighlight]}
         components={markdownComponents}
+        urlTransform={(url) => url.startsWith("thyself:") ? url : defaultUrlTransform(url)}
       >
         {block.text}
       </ReactMarkdown>

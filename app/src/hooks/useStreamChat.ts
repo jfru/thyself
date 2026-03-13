@@ -511,7 +511,16 @@ export function useStreamChat(opts: StreamChatOptions = {}) {
         } else if (shouldUseOnboardingPrompt) {
           systemPrompt = buildOnboardingPrompt(subjectName || "User", effectiveSelectedSources);
         } else {
-          systemPrompt = buildSystemPrompt(subjectName || "User", targetSessionId);
+          const hasPortraitData = portraitStatus?.status === "completed";
+          systemPrompt = buildSystemPrompt(subjectName || "User", targetSessionId, {
+            portraitStatus: portraitStatus ? {
+              status: portraitStatus.status as "running" | "completed" | "failed" | "cancelled" | "interrupted",
+              phase: portraitStatus.phase,
+              results_summary: portraitStatus.results_summary,
+            } : null,
+            connectedSources: connectedSources?.length ? connectedSources : effectiveSelectedSources,
+            hasPortraitData,
+          });
         }
 
         // #region agent log
