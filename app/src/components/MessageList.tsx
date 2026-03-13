@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { Info } from "lucide-react";
 import type {
   Message,
   UserMessage as UserMessageType,
@@ -22,13 +24,30 @@ function SystemMessageBubble({
   showButton: boolean;
   onAction?: (msg: string) => void;
 }) {
+  const [showLearnMore, setShowLearnMore] = useState(false);
   const hasActions = showButton && (message.action || message.secondaryAction);
   return (
     <div className="flex justify-center py-6">
       <div className="bg-zinc-900/80 border border-zinc-800 rounded-xl px-5 py-4 max-w-sm text-center">
         <p className="text-sm text-zinc-300 text-balance">{message.text}</p>
         {message.subtitle && (
-          <p className="mt-2 text-xs text-zinc-500 leading-relaxed text-balance">{message.subtitle}</p>
+          <p className="mt-2 text-xs text-zinc-500 leading-relaxed text-balance">
+            {message.subtitle}
+            {message.learnMore && (
+              <button
+                onClick={() => setShowLearnMore((v) => !v)}
+                className="inline-flex items-center ml-1 text-zinc-500 hover:text-zinc-300 transition-colors align-middle"
+                aria-label="Learn more about data privacy"
+              >
+                <Info size={12} />
+              </button>
+            )}
+          </p>
+        )}
+        {showLearnMore && message.learnMore && (
+          <p className="mt-1.5 text-xs text-zinc-600 leading-relaxed text-balance">
+            {message.learnMore}
+          </p>
         )}
         {hasActions && (
           <div className="mt-3 flex flex-col items-center gap-2">

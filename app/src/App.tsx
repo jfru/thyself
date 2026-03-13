@@ -127,7 +127,9 @@ const OPEN_SETUP_ACTION = "__OPEN_SETUP__";
 const OPEN_PORTRAIT_ACTION = "__OPEN_PORTRAIT__";
 const CONTINUE_SETUP_MESSAGE = "I'm ready to continue connecting my data.";
 const PRIVACY_SUBTITLE =
-  "Your data stays on this computer. It's only sent to Claude when you use the app. Claude does not use it for training and deletes it within 30 days. We're working on getting zero-day deletion so nothing is kept at all.";
+  "Thyself reads your messages to understand your life — your relationships, patterns, and growth. Your data is stored only on this computer.";
+const PRIVACY_LEARN_MORE =
+  "When you use the app, relevant messages are sent to our AI provider for processing. They do not use your data for training and delete it within 30 days. We're working on zero-day deletion so nothing is kept at all.";
 
 const ALL_SOURCES = ["imessage", "whatsapp", "gmail", "chatgpt"];
 
@@ -186,6 +188,7 @@ function makeSetupStartMessage(): SystemMessage {
     role: "system",
     text: "Ready to connect your message history?",
     subtitle: PRIVACY_SUBTITLE,
+    learnMore: PRIVACY_LEARN_MORE,
     action: {
       label: "Get started",
       message: "Let's get my message history set up.",
@@ -402,6 +405,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
                 role: "system",
                 text: "Ready to connect your message history?",
                 subtitle: PRIVACY_SUBTITLE,
+                learnMore: PRIVACY_LEARN_MORE,
                 action: {
                   label: "Let's go",
                   message: "Let's get my message history set up.",
@@ -524,6 +528,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
           role: "system",
           text: "Ready to connect your message history?",
           subtitle: PRIVACY_SUBTITLE,
+          learnMore: PRIVACY_LEARN_MORE,
           action: {
             label: "Let's go",
             message: "Let's get my message history set up.",
