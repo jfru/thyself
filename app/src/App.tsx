@@ -304,7 +304,6 @@ function normalizeSetupMessages(messages: Message[]): Message[] {
 const LAST_SESSION_KEY = "thyself_last_session_id";
 
 function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: MainAppProps) {
-  const sessionIdRef = useRef<string | null>(null);
   const [selectedSources, setSelectedSources] = useState<string[]>(profile.selected_sources);
   const [connectedSources, setConnectedSources] = useState<string[]>([]);
   const [activeSessionKind, setActiveSessionKind] = useState<"conversation" | "setup" | "portrait" | null>(null);
@@ -315,8 +314,8 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
     started_at?: string | null; updated_at?: string | null; finished_at?: string | null;
     extraction_months_covered?: string | null; results_summary?: string | null;
   } | null>(null);
-  const { messages, isStreaming, streamingSessionId, sendMessage, stopStreaming, clearMessages, setMessages } =
-    useStreamChat(sessionIdRef, {
+  const { messages, streamingSessionIds, sendMessage, stopStreaming, clearMessages, setMessages, switchToSession, getSessionMessages, isSessionStreaming } =
+    useStreamChat({
       subjectName: profile.subject_name,
       onboardingStatus: profile.onboarding_status,
       selectedSources,
@@ -337,7 +336,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
   const [isReadOnly, setIsReadOnly] = useState(false);
   const [sidebarRefreshKey, setSidebarRefreshKey] = useState(0);
 
-  const isStreamingHere = isStreaming && streamingSessionId === activeSessionId;
+  const isStreamingHere = streamingSessionIds.has(activeSessionId ?? "");
 
   const refreshSidebar = useCallback(() => {
     setSidebarRefreshKey((k) => k + 1);
@@ -395,7 +394,6 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
             });
             setActiveSessionId(session.id);
             setActiveSessionKind((session.kind ?? "conversation") as "conversation" | "setup" | "portrait");
-            sessionIdRef.current = session.id;
             refreshSidebar();
 
             const hasHistory =
@@ -411,7 +409,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
                 },
                 timestamp: Date.now(),
               };
-              setMessages([...normalizedHistory, restartMsg]);
+              switchToSession(session.id, [...normalizedHistory, restartMsg]);
             } else {
               const welcomeMsg: SystemMessage = {
                 role: "system",
@@ -423,21 +421,24 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
                 },
                 timestamp: Date.now(),
               };
-              setMessages([welcomeMsg]);
+              switchToSession(session.id, [welcomeMsg]);
             }
             return;
           }
 
-          // Ensure portrait session exists in sidebar when data is imported
+          // Ensure portrait and conversation sessions exist when data is imported
           try {
             await invokeCommand<SessionMeta>("create_session", {
               name: "Build Your Portrait",
               kind: "portrait",
             });
-            refreshSidebar();
-          } catch {
-            // best effort
-          }
+          } catch { /* best effort */ }
+          try {
+            await invokeCommand<SessionMeta>("create_session", {
+              kind: "conversation",
+            });
+          } catch { /* best effort */ }
+          refreshSidebar();
         }
 
         const manifest = await invokeCommand<SessionMeta[]>("list_sessions");
@@ -450,20 +451,21 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
         if (active) {
           setActiveSessionId(active.id);
           setActiveSessionKind((active.kind ?? "conversation") as "conversation" | "setup" | "portrait");
-          sessionIdRef.current = active.id;
           const full = await invokeCommand<{ session: SessionMeta; summary: string | null }>(
             "load_session", { sessionId: active.id }
           );
           if (Array.isArray(full.session.chatHistory) && full.session.chatHistory.length > 0) {
-            setMessages(full.session.chatHistory);
+            switchToSession(active.id, full.session.chatHistory);
           } else if (profile.onboarding_status === "pending") {
             const activeKind = (active.kind ?? "conversation") as "conversation" | "setup" | "portrait";
             if (activeKind === "setup") {
-              setMessages([makeNoDataMessage(activeKind)]);
+              switchToSession(active.id, [makeNoDataMessage(activeKind)]);
             } else {
               const nudge = await makeConversationNudgeMessage(selectedSources);
-              setMessages([nudge]);
+              switchToSession(active.id, [nudge]);
             }
+          } else {
+            switchToSession(active.id, []);
           }
           if (full.session.status === "completed") {
             setSessionSummary(full.summary);
@@ -482,7 +484,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
       }
     }
     resumeActiveSession();
-  }, [setMessages, profile.id, hasImportedData]);
+  }, [switchToSession, profile.id, hasImportedData]);
 
   const saveCurrentMessages = useCallback(
     async (sessionId: string, msgs: Message[]) => {
@@ -517,7 +519,6 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
 
       setActiveSessionId(session.id);
       setActiveSessionKind((session.kind ?? "conversation") as "conversation" | "setup" | "portrait");
-      sessionIdRef.current = session.id;
       setSessionName(session.name);
 
       if (session.chatHistory && Array.isArray(session.chatHistory) && session.chatHistory.length > 0) {
@@ -529,14 +530,14 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
           !!last.action;
 
         if (hasSystemCtaAsLast) {
-          setMessages(normalizedHistory);
+          switchToSession(session.id, normalizedHistory);
         } else {
           const status = await getSourceConnectionStatus(selectedSources);
           if (status.connected.length > 0) {
             const nudge = makeSourceNudgeMessage(status);
-            setMessages([...normalizedHistory, nudge]);
+            switchToSession(session.id, [...normalizedHistory, nudge]);
           } else {
-            setMessages([...normalizedHistory, makeSetupContinueMessage()]);
+            switchToSession(session.id, [...normalizedHistory, makeSetupContinueMessage()]);
           }
         }
       } else {
@@ -550,7 +551,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
           },
           timestamp: Date.now(),
         };
-        setMessages([welcomeMsg]);
+        switchToSession(session.id, [welcomeMsg]);
       }
 
       if (session.status === "completed") {
@@ -564,7 +565,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
     } catch (err) {
       console.error("Failed to open setup session:", err);
     }
-  }, [clearMessages, refreshSidebar, setMessages]);
+  }, [refreshSidebar, switchToSession, selectedSources]);
 
   const openPortraitSession = useCallback(async () => {
     try {
@@ -580,17 +581,16 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
 
       setActiveSessionId(session.id);
       setActiveSessionKind("portrait");
-      sessionIdRef.current = session.id;
       setSessionName(session.name);
 
       const status = await getSourceConnectionStatus(selectedSources);
       setConnectedSources(status.connected.filter(s => selectedSources.includes(s)));
 
       if (session.chatHistory && Array.isArray(session.chatHistory) && session.chatHistory.length > 0) {
-        setMessages(session.chatHistory);
+        switchToSession(session.id, session.chatHistory);
       } else {
         const nudge = await makeConversationNudgeMessage(selectedSources);
-        setMessages([nudge]);
+        switchToSession(session.id, [nudge]);
       }
 
       if (session.status === "completed") {
@@ -604,7 +604,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
     } catch (err) {
       console.error("Failed to open portrait session:", err);
     }
-  }, [refreshSidebar, selectedSources, setMessages]);
+  }, [refreshSidebar, selectedSources, switchToSession]);
 
   const addSourceToProfile = useCallback(
     async (sourceId: string): Promise<string[] | undefined> => {
@@ -687,7 +687,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
           kind = "conversation";
           setActiveSessionId(sid);
           setActiveSessionKind(kind);
-          sessionIdRef.current = sid;
+          switchToSession(sid, []);
           refreshSidebar();
         } catch (err) {
           console.error("Failed to create session:", err);
@@ -728,6 +728,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
       refreshSidebar,
       sendMessage,
       setMessages,
+      switchToSession,
     ]
   );
 
@@ -747,10 +748,6 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
     [handleSend]
   );
 
-  const prevStreamingRef = useRef(isStreaming);
-  const isStreamingRef = useRef(isStreaming);
-  useEffect(() => { isStreamingRef.current = isStreaming; }, [isStreaming]);
-
   // Persist incrementally so refresh/crash during long tool runs
   // (e.g. Gmail import) doesn't lose in-flight chat history.
   useEffect(() => {
@@ -762,51 +759,53 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
     return () => window.clearTimeout(timer);
   }, [activeSessionId, messages, saveCurrentMessages]);
 
+  // Detect when any session stops streaming — save its messages and
+  // refresh UI state if it was the active session.
+  const prevStreamingIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    const justFinishedStreaming = prevStreamingRef.current && !isStreaming;
-    prevStreamingRef.current = isStreaming;
+    const prev = prevStreamingIdsRef.current;
+    const curr = streamingSessionIds;
+    prevStreamingIdsRef.current = new Set(curr);
 
-    if (!justFinishedStreaming || !activeSessionId) return;
-    const currentSessionId = activeSessionId;
+    for (const id of prev) {
+      if (curr.has(id)) continue;
 
-    async function persistAndRefreshSessionState() {
+      const msgs = getSessionMessages(id);
       // #region agent log
-      dlog('App.tsx:save-trigger', 'save triggered', {activeSessionId: currentSessionId,messageCount:messages.length});
+      dlog('App.tsx:save-trigger', 'save triggered', {sessionId: id, messageCount: msgs.length});
       // #endregion
+      void saveCurrentMessages(id, msgs);
 
-      await saveCurrentMessages(currentSessionId, messages);
-      refreshSidebar();
-
-      // Pull latest session status immediately so completed summaries render
-      // in the current thread without requiring a manual thread switch.
-      try {
-        const result = await invokeCommand<{
-          session: SessionMeta;
-          summary: string | null;
-        }>("load_session", { sessionId: currentSessionId });
-        const { session, summary } = result;
-        setSessionName(session.name);
-        if (session.status === "completed") {
-          setSessionSummary(summary);
-          setIsReadOnly(true);
-        } else {
-          setSessionSummary(null);
-          setIsReadOnly(false);
-        }
-      } catch (err) {
-        console.error("Failed to refresh active session state:", err);
+      if (id === activeSessionId) {
+        refreshSidebar();
+        void (async () => {
+          try {
+            const result = await invokeCommand<{
+              session: SessionMeta;
+              summary: string | null;
+            }>("load_session", { sessionId: id });
+            const { session, summary } = result;
+            setSessionName(session.name);
+            if (session.status === "completed") {
+              setSessionSummary(summary);
+              setIsReadOnly(true);
+            } else {
+              setSessionSummary(null);
+              setIsReadOnly(false);
+            }
+          } catch (err) {
+            console.error("Failed to refresh active session state:", err);
+          }
+        })();
       }
-
     }
-
-    void persistAndRefreshSessionState();
-  }, [isStreaming, activeSessionId, activeSessionKind, messages, refreshSidebar, saveCurrentMessages, setMessages]);
+  }, [streamingSessionIds, activeSessionId, getSessionMessages, saveCurrentMessages, refreshSidebar]);
 
   // Delayed CTA for setup sessions: only append once streaming has truly
   // stopped (stayed off for 3 s) to avoid premature CTAs between tool rounds.
   const ctaTimerRef = useRef<number | null>(null);
   useEffect(() => {
-    if (isStreaming || activeSessionKind !== "setup") {
+    if (isStreamingHere || activeSessionKind !== "setup") {
       if (ctaTimerRef.current !== null) {
         window.clearTimeout(ctaTimerRef.current);
         ctaTimerRef.current = null;
@@ -824,10 +823,13 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
               name: "Build Your Portrait",
               kind: "portrait",
             });
-            refreshSidebar();
-          } catch {
-            // already exists
-          }
+          } catch { /* already exists */ }
+          try {
+            await invokeCommand<SessionMeta>("create_session", {
+              kind: "conversation",
+            });
+          } catch { /* already exists */ }
+          refreshSidebar();
 
           setMessages((prev) => {
             const last = prev[prev.length - 1];
@@ -849,17 +851,16 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
         ctaTimerRef.current = null;
       }
     };
-  }, [isStreaming, activeSessionKind, selectedSources, refreshSidebar, setMessages]);
+  }, [isStreamingHere, activeSessionKind, selectedSources, refreshSidebar, setMessages]);
 
   const handleNewSession = useCallback(() => {
-    clearMessages();
+    switchToSession(null, []);
     setActiveSessionId(null);
     setActiveSessionKind(null);
-    sessionIdRef.current = null;
     setSessionSummary(null);
     setSessionName(null);
     setIsReadOnly(false);
-  }, [clearMessages]);
+  }, [switchToSession]);
 
   const handleClearSession = useCallback(async () => {
     clearMessages();
@@ -879,6 +880,28 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
   const handleLoadSession = useCallback(
     async (sessionId: string) => {
       try {
+        // If this session is streaming in the background, switch to its
+        // cached state which has the latest in-flight messages.
+        if (isSessionStreaming(sessionId)) {
+          setActiveSessionId(sessionId);
+          switchToSession(sessionId);
+          const result = await invokeCommand<{
+            session: SessionMeta;
+            summary: string | null;
+          }>("load_session", { sessionId });
+          const { session, summary } = result;
+          setActiveSessionKind((session.kind ?? "conversation") as "conversation" | "setup" | "portrait");
+          setSessionName(session.name);
+          if (session.status === "completed") {
+            setSessionSummary(summary);
+            setIsReadOnly(true);
+          } else {
+            setSessionSummary(null);
+            setIsReadOnly(false);
+          }
+          return;
+        }
+
         const result = await invokeCommand<{
           session: SessionMeta;
           summary: string | null;
@@ -888,7 +911,6 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
 
         setActiveSessionId(session.id);
         setActiveSessionKind((session.kind ?? "conversation") as "conversation" | "setup" | "portrait");
-        sessionIdRef.current = session.id;
         setSessionName(session.name);
 
         if (session.chatHistory && Array.isArray(session.chatHistory) && session.chatHistory.length > 0) {
@@ -900,28 +922,29 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
           if (loadedKind === "setup") {
             const last = normalized[normalized.length - 1] as Message | undefined;
             const hasSystemCtaAsLast = last && last.role === "system" && !!last.action;
-            if (hasSystemCtaAsLast || isStreamingRef.current) {
-              setMessages(normalized);
+            if (hasSystemCtaAsLast || isSessionStreaming(session.id)) {
+              switchToSession(session.id, normalized);
             } else {
               const status = await getSourceConnectionStatus(selectedSources);
               if (status.connected.length > 0) {
-                setMessages([...normalized, makeSourceNudgeMessage(status)]);
+                switchToSession(session.id, [...normalized, makeSourceNudgeMessage(status)]);
               } else {
-                setMessages([...normalized, makeSetupContinueMessage()]);
+                switchToSession(session.id, [...normalized, makeSetupContinueMessage()]);
               }
             }
           } else {
-            setMessages(normalized);
+            switchToSession(session.id, normalized);
           }
         } else if (profile.onboarding_status === "pending") {
-          clearMessages();
           const loadedKind = (session.kind ?? "conversation") as "conversation" | "setup" | "portrait";
           if (loadedKind === "setup") {
-            setMessages([makeNoDataMessage(loadedKind)]);
+            switchToSession(session.id, [makeNoDataMessage(loadedKind)]);
           } else {
             const nudge = await makeConversationNudgeMessage(selectedSources);
-            setMessages([nudge]);
+            switchToSession(session.id, [nudge]);
           }
+        } else {
+          switchToSession(session.id, []);
         }
 
         if (session.status === "completed") {
@@ -935,7 +958,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
         console.error("Failed to load session:", err);
       }
     },
-    [setMessages, clearMessages, profile.onboarding_status, selectedSources]
+    [switchToSession, isSessionStreaming, profile.onboarding_status, selectedSources]
   );
 
   return (
@@ -946,7 +969,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
           onNewSession={handleNewSession}
           onLoadSession={handleLoadSession}
           activeSessionId={activeSessionId}
-          streamingSessionId={isStreaming ? streamingSessionId : null}
+          streamingSessionIds={streamingSessionIds}
           collapsed={sidebarCollapsed}
           onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
           refreshKey={sidebarRefreshKey}
