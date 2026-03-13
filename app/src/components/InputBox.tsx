@@ -1,13 +1,19 @@
-import { useState, useRef, useEffect, useCallback, KeyboardEvent, DragEvent, ClipboardEvent } from "react";
+import { useState, useRef, useEffect, useCallback, DragEvent, ClipboardEvent } from "react";
 import { Send, Square, Paperclip, X, Folder, FileText } from "lucide-react";
-import type { ImageAttachment, FileAttachment } from "../lib/types";
+import type { ImageAttachment, FileAttachment, ContextAttachment } from "../lib/types";
 import { isTauri } from "../lib/tauriBridge";
+import { MentionDropdown } from "./MentionDropdown";
 
 const ACCEPTED_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
-const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20 MB
+const MAX_FILE_SIZE = 20 * 1024 * 1024;
 
 interface InputBoxProps {
-  onSend: (text: string, images?: ImageAttachment[], options?: { selectedSourcesOverride?: string[] }, files?: FileAttachment[]) => void;
+  onSend: (
+    text: string,
+    images?: ImageAttachment[],
+    options?: { selectedSourcesOverride?: string[]; context?: ContextAttachment[] },
+    files?: FileAttachment[]
+  ) => void;
   onStop: () => void;
   isStreaming: boolean;
   pendingDroppedImages?: ImageAttachment[];
@@ -36,6 +42,102 @@ function fileToAttachment(file: File): Promise<ImageAttachment | null> {
   });
 }
 
+function extractContentFromEditable(el: HTMLElement): {
+  text: string;
+  context: ContextAttachment[];
+} {
+  const context: ContextAttachment[] = [];
+  const parts: string[] = [];
+
+  function walk(node: Node) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      parts.push(node.textContent || "");
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+      const elem = node as HTMLElement;
+
+      if (elem.tagName === "BR") {
+        parts.push("\n");
+        return;
+      }
+
+      if (elem.dataset.mentionType) {
+        const attachment: ContextAttachment = {
+          type: elem.dataset.mentionType as "session",
+          id: elem.dataset.mentionId || "",
+          name: elem.dataset.mentionName || "",
+          preview: elem.dataset.mentionPreview,
+        };
+        context.push(attachment);
+        parts.push(`@${attachment.name}`);
+        return;
+      }
+
+      if (elem.tagName === "DIV" && parts.length > 0 && !parts[parts.length - 1].endsWith("\n")) {
+        parts.push("\n");
+      }
+
+      for (const child of Array.from(node.childNodes)) {
+        walk(child);
+      }
+    }
+  }
+
+  for (const child of Array.from(el.childNodes)) {
+    walk(child);
+  }
+
+  return { text: parts.join(""), context };
+}
+
+function getMentionQueryAtCursor(el: HTMLElement): {
+  query: string;
+  anchorRect: { top: number; left: number };
+  range: Range;
+} | null {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0 || !sel.isCollapsed) return null;
+  if (!el.contains(sel.anchorNode)) return null;
+
+  const node = sel.anchorNode;
+  if (!node || node.nodeType !== Node.TEXT_NODE) return null;
+
+  const text = node.textContent || "";
+  const offset = sel.anchorOffset;
+  const before = text.slice(0, offset);
+
+  const atIdx = before.lastIndexOf("@");
+  if (atIdx === -1) return null;
+  if (atIdx > 0 && before[atIdx - 1] !== " " && before[atIdx - 1] !== "\n") return null;
+
+  const query = before.slice(atIdx + 1);
+  if (query.includes("\n")) return null;
+
+  const range = document.createRange();
+  range.setStart(node, atIdx);
+  range.setEnd(node, offset);
+
+  const rect = range.getBoundingClientRect();
+
+  return {
+    query,
+    anchorRect: { top: rect.top, left: rect.left },
+    range,
+  };
+}
+
+function createMentionPill(item: ContextAttachment): HTMLSpanElement {
+  const pill = document.createElement("span");
+  pill.contentEditable = "false";
+  pill.dataset.mentionType = item.type;
+  pill.dataset.mentionId = item.id;
+  pill.dataset.mentionName = item.name;
+  if (item.preview) pill.dataset.mentionPreview = item.preview;
+  pill.className =
+    "inline-flex items-center gap-1 rounded bg-blue-500/20 text-blue-300 px-1.5 py-0.5 text-xs font-medium mx-0.5 align-baseline select-all cursor-default whitespace-nowrap";
+  pill.textContent = `@${item.name}`;
+  return pill;
+}
+
 export function InputBox({
   onSend,
   onStop,
@@ -46,17 +148,38 @@ export function InputBox({
   onConsumeDroppedFiles,
   isTauriDragging,
 }: InputBoxProps) {
-  const [text, setText] = useState("");
   const [images, setImages] = useState<ImageAttachment[]>([]);
   const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [hasContent, setHasContent] = useState(false);
+  const [showPlaceholder, setShowPlaceholder] = useState(true);
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [mentionAnchorRect, setMentionAnchorRect] = useState<{ top: number; left: number } | null>(null);
+
+  const editorRef = useRef<HTMLDivElement>(null);
+  const mentionRangeRef = useRef<Range | null>(null);
   const dragCounter = useRef(0);
 
+  const updateEditorState = useCallback(() => {
+    const el = editorRef.current;
+    if (!el) return;
+    const text = el.textContent?.trim() || "";
+    const hasMentions = el.querySelector("[data-mention-type]") !== null;
+    setHasContent(text.length > 0 || hasMentions);
+    setShowPlaceholder(text.length === 0 && !hasMentions);
+  }, []);
+
+  const autoResize = useCallback(() => {
+    const el = editorRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 200) + "px";
+  }, []);
+
   useEffect(() => {
-    if (!isStreaming && textareaRef.current) {
-      textareaRef.current.focus();
+    if (!isStreaming && editorRef.current) {
+      editorRef.current.focus();
     }
   }, [isStreaming]);
 
@@ -72,13 +195,6 @@ export function InputBox({
     });
     return () => document.removeEventListener("click", close);
   }, [showAttachMenu]);
-
-  useEffect(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = Math.min(el.scrollHeight, 200) + "px";
-  }, [text]);
 
   useEffect(() => {
     if (pendingDroppedImages?.length) {
@@ -108,49 +224,143 @@ export function InputBox({
     setFileAttachments((prev) => prev.filter((_, i) => i !== idx));
   }, []);
 
-  const handleSubmit = () => {
+  const handleSubmit = useCallback(() => {
+    const el = editorRef.current;
+    if (!el || isStreaming) return;
+
+    const { text, context } = extractContentFromEditable(el);
     const trimmed = text.trim();
-    if ((!trimmed && images.length === 0 && fileAttachments.length === 0) || isStreaming) return;
+    if (!trimmed && images.length === 0 && fileAttachments.length === 0 && context.length === 0) return;
+
     onSend(
       trimmed,
       images.length > 0 ? images : undefined,
-      undefined,
+      context.length > 0 ? { context } : undefined,
       fileAttachments.length > 0 ? fileAttachments : undefined
     );
-    setText("");
+
+    el.innerHTML = "";
     setImages([]);
     setFileAttachments([]);
-    if (textareaRef.current) {
-      textareaRef.current.style.height = "auto";
-    }
-  };
+    setHasContent(false);
+    setShowPlaceholder(true);
+    setMentionQuery(null);
+    setMentionAnchorRect(null);
+    mentionRangeRef.current = null;
+    autoResize();
+  }, [isStreaming, images, fileAttachments, onSend, autoResize]);
 
-  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSubmit();
-    }
-    if (e.key === "Escape" && isStreaming) {
-      e.preventDefault();
-      onStop();
-    }
-  };
+  const handleInput = useCallback(() => {
+    updateEditorState();
+    autoResize();
 
-  const handlePaste = (e: ClipboardEvent) => {
-    const items = e.clipboardData?.items;
-    if (!items) return;
-    const imageFiles: File[] = [];
-    for (const item of Array.from(items)) {
-      if (item.kind === "file" && ACCEPTED_TYPES.has(item.type)) {
-        const file = item.getAsFile();
-        if (file) imageFiles.push(file);
+    const result = getMentionQueryAtCursor(editorRef.current!);
+    if (result) {
+      setMentionQuery(result.query);
+      setMentionAnchorRect(result.anchorRect);
+      mentionRangeRef.current = result.range;
+    } else {
+      setMentionQuery(null);
+      setMentionAnchorRect(null);
+      mentionRangeRef.current = null;
+    }
+  }, [updateEditorState, autoResize]);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      if (mentionQuery !== null) {
+        if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Enter" || e.key === "Tab") {
+          return;
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          setMentionQuery(null);
+          setMentionAnchorRect(null);
+          mentionRangeRef.current = null;
+          return;
+        }
       }
-    }
-    if (imageFiles.length) {
-      e.preventDefault();
-      addFiles(imageFiles);
-    }
-  };
+
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        handleSubmit();
+      }
+      if (e.key === "Escape" && isStreaming) {
+        e.preventDefault();
+        onStop();
+      }
+    },
+    [mentionQuery, handleSubmit, isStreaming, onStop]
+  );
+
+  const handleMentionSelect = useCallback(
+    (item: ContextAttachment) => {
+      const el = editorRef.current;
+      const range = mentionRangeRef.current;
+      if (!el || !range) return;
+
+      const sel = window.getSelection();
+      if (!sel) return;
+
+      sel.removeAllRanges();
+      sel.addRange(range);
+
+      range.deleteContents();
+
+      const pill = createMentionPill(item);
+      range.insertNode(pill);
+
+      const spacer = document.createTextNode("\u00A0");
+      pill.after(spacer);
+
+      const newRange = document.createRange();
+      newRange.setStartAfter(spacer);
+      newRange.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(newRange);
+
+      setMentionQuery(null);
+      setMentionAnchorRect(null);
+      mentionRangeRef.current = null;
+      updateEditorState();
+      autoResize();
+    },
+    [updateEditorState, autoResize]
+  );
+
+  const handleMentionClose = useCallback(() => {
+    setMentionQuery(null);
+    setMentionAnchorRect(null);
+    mentionRangeRef.current = null;
+  }, []);
+
+  const handlePaste = useCallback(
+    (e: ClipboardEvent<HTMLDivElement>) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      const imageFiles: File[] = [];
+      for (const item of Array.from(items)) {
+        if (item.kind === "file" && ACCEPTED_TYPES.has(item.type)) {
+          const file = item.getAsFile();
+          if (file) imageFiles.push(file);
+        }
+      }
+
+      if (imageFiles.length) {
+        e.preventDefault();
+        addFiles(imageFiles);
+        return;
+      }
+
+      const plainText = e.clipboardData?.getData("text/plain");
+      if (plainText) {
+        e.preventDefault();
+        document.execCommand("insertText", false, plainText);
+      }
+    },
+    [addFiles]
+  );
 
   const handleDragEnter = (e: DragEvent) => {
     e.preventDefault();
@@ -234,8 +444,8 @@ export function InputBox({
   }, [isStreaming]);
 
   const showDragOverlay = isDragging || isTauriDragging;
-  const hasContent = text.trim() || images.length > 0 || fileAttachments.length > 0;
-  const hasAttachments = images.length > 0 || fileAttachments.length > 0;
+  const hasPickerAttachments = images.length > 0 || fileAttachments.length > 0;
+  const canSend = hasContent || hasPickerAttachments;
 
   return (
     <div
@@ -262,7 +472,7 @@ export function InputBox({
             </div>
           )}
 
-          {hasAttachments && (
+          {hasPickerAttachments && (
             <div className="flex flex-wrap gap-2 px-3 pt-3">
               {images.map((img, idx) => (
                 <div
@@ -333,17 +543,25 @@ export function InputBox({
                 </div>
               )}
             </div>
-            <textarea
-              ref={textareaRef}
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              onKeyDown={handleKeyDown}
-              onPaste={handlePaste}
-              placeholder="Message thyself..."
-              disabled={isStreaming}
-              rows={1}
-              className="flex-1 resize-none bg-transparent text-zinc-100 placeholder-zinc-500 outline-none text-sm leading-relaxed"
-            />
+            <div className="relative flex-1">
+              {showPlaceholder && (
+                <div className="absolute inset-0 text-zinc-500 text-sm leading-relaxed pointer-events-none select-none">
+                  Message thyself...
+                </div>
+              )}
+              <div
+                ref={editorRef}
+                contentEditable={!isStreaming}
+                onInput={handleInput}
+                onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
+                onFocus={() => updateEditorState()}
+                onBlur={() => updateEditorState()}
+                role="textbox"
+                aria-placeholder="Message thyself..."
+                className="min-h-[1.5em] max-h-[200px] overflow-y-auto resize-none bg-transparent text-zinc-100 outline-none text-sm leading-relaxed whitespace-pre-wrap break-words [&_[data-mention-type]]:inline-flex [&_[data-mention-type]]:items-center [&_[data-mention-type]]:gap-1 [&_[data-mention-type]]:rounded [&_[data-mention-type]]:bg-blue-500/20 [&_[data-mention-type]]:text-blue-300 [&_[data-mention-type]]:px-1.5 [&_[data-mention-type]]:py-0.5 [&_[data-mention-type]]:text-xs [&_[data-mention-type]]:font-medium [&_[data-mention-type]]:mx-0.5 [&_[data-mention-type]]:align-baseline [&_[data-mention-type]]:cursor-default [&_[data-mention-type]]:whitespace-nowrap"
+              />
+            </div>
             {isStreaming ? (
               <button
                 onClick={onStop}
@@ -355,7 +573,7 @@ export function InputBox({
             ) : (
               <button
                 onClick={handleSubmit}
-                disabled={!hasContent}
+                disabled={!canSend}
                 className="flex-shrink-0 rounded-lg p-1.5 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-zinc-400 transition-all"
               >
                 <Send size={18} />
@@ -364,9 +582,18 @@ export function InputBox({
           </div>
         </div>
         <div className="mt-1.5 text-center text-xs text-zinc-600">
-          {isStreaming ? "Esc to stop" : "Enter to send"}
+          {isStreaming ? "Esc to stop" : "Enter to send · @ to mention"}
         </div>
       </div>
+
+      {mentionQuery !== null && (
+        <MentionDropdown
+          query={mentionQuery}
+          onSelect={handleMentionSelect}
+          onClose={handleMentionClose}
+          anchorRect={mentionAnchorRect}
+        />
+      )}
     </div>
   );
 }

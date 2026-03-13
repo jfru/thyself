@@ -55,11 +55,19 @@ export interface FileAttachment {
   name: string;
 }
 
+export interface ContextAttachment {
+  type: "session";
+  id: string;
+  name: string;
+  preview?: string;
+}
+
 export interface UserMessage {
   role: "user";
   content: string;
   images?: ImageAttachment[];
   files?: FileAttachment[];
+  context?: ContextAttachment[];
   timestamp: number;
 }
 

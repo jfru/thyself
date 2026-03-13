@@ -8,6 +8,7 @@ import type {
   WebSearchResult,
   ImageAttachment,
   FileAttachment,
+  ContextAttachment,
   UserMessage,
   SessionMeta,
 } from "../lib/types";
@@ -114,6 +115,7 @@ export interface StreamChatOptions {
 interface SendMessageOptions {
   sessionKind?: "conversation" | "setup" | "portrait" | null;
   selectedSourcesOverride?: string[];
+  context?: ContextAttachment[];
 }
 
 interface StreamContext {
@@ -203,6 +205,7 @@ export function useStreamChat(opts: StreamChatOptions = {}) {
         content: userText,
         ...(images?.length ? { images } : {}),
         ...(files?.length ? { files } : {}),
+        ...(options?.context?.length ? { context: options.context } : {}),
         timestamp: Date.now(),
       };
 
@@ -451,14 +454,46 @@ export function useStreamChat(opts: StreamChatOptions = {}) {
         }
       };
 
+      const contextCache = new Map<string, string>();
+      const allMessages = [...currentMessages, userMsg].filter((m) => m.role !== "system");
+      for (const m of allMessages) {
+        if (m.role === "user") {
+          const um = m as UserMessage;
+          if (um.context) {
+            for (const ctx of um.context) {
+              if (ctx.type === "session" && !contextCache.has(ctx.id)) {
+                try {
+                  const result = await invokeCommand<{ session: unknown; summary: string | null }>(
+                    "load_session", { sessionId: ctx.id }
+                  );
+                  contextCache.set(ctx.id, result.summary || "(No summary available)");
+                } catch {
+                  contextCache.set(ctx.id, "(Failed to load session)");
+                }
+              }
+            }
+          }
+        }
+      }
+
       const rawApiMessages: { role: string; content: unknown }[] = [];
-      for (const m of [...currentMessages, userMsg].filter((m) => m.role !== "system")) {
+      for (const m of allMessages) {
         if (m.role === "user") {
           const um = m as UserMessage;
           const hasImages = !!um.images?.length;
           const hasFiles = !!um.files?.length;
-          if (hasImages || hasFiles) {
+          const hasContext = !!um.context?.length;
+          if (hasImages || hasFiles || hasContext) {
             const parts: unknown[] = [];
+            if (um.context) {
+              for (const c of um.context) {
+                const content = contextCache.get(c.id) || "(No content)";
+                parts.push({
+                  type: "text",
+                  text: `[Context from previous session "${c.name}":\n\n${content}]`,
+                });
+              }
+            }
             if (um.images) {
               for (const img of um.images) {
                 parts.push({

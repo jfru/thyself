@@ -6,7 +6,7 @@ use crate::profiles;
 use crate::sessions;
 use crate::tools::get_tool_definitions;
 use axum::{
-    extract::State as AxumState,
+    extract::{DefaultBodyLimit, State as AxumState},
     http::StatusCode,
     response::{
         sse::{Event, Sse},
@@ -91,6 +91,7 @@ pub async fn start_dev_server() {
         .route("/api/cmd_check_subscription", post(handle_check_subscription))
         .route("/api/cmd_create_checkout", post(handle_create_checkout))
         .route("/api/cmd_create_portal_session", post(handle_create_portal_session))
+        .layer(DefaultBodyLimit::max(50 * 1024 * 1024))
         .layer(cors)
         .with_state(state);
 
