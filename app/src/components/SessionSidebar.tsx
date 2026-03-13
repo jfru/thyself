@@ -8,6 +8,7 @@ interface SessionSidebarProps {
   onLoadSession: (sessionId: string) => void;
   activeSessionId: string | null;
   streamingSessionIds: Set<string>;
+  portraitBuildRunning?: boolean;
   collapsed: boolean;
   onToggle: () => void;
   refreshKey: number;
@@ -22,6 +23,7 @@ export function SessionSidebar({
   onLoadSession,
   activeSessionId,
   streamingSessionIds,
+  portraitBuildRunning,
   collapsed,
   onToggle,
   refreshKey,
@@ -247,6 +249,7 @@ export function SessionSidebar({
               const isActive = session.id === activeSessionId;
               const isThisStreaming = streamingSessionIds.has(session.id);
               const isPortrait = session.kind === "portrait";
+              const isBusy = isThisStreaming || (isPortrait && !!portraitBuildRunning);
               const Icon = isPortrait ? Sparkles : Settings;
               const activeColor = isPortrait ? "text-amber-400" : "text-purple-400";
               const inactiveColor = isPortrait ? "text-amber-500/70" : "text-purple-500/70";
@@ -260,7 +263,7 @@ export function SessionSidebar({
                       : "hover:bg-zinc-900 border-l-2 border-transparent"
                   }`}
                 >
-                  {isThisStreaming ? (
+                  {isBusy ? (
                     <Loader2
                       size={14}
                       className={`mt-0.5 flex-shrink-0 animate-spin ${isActive ? activeColor : inactiveColor}`}

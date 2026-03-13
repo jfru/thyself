@@ -356,7 +356,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
     const shouldPoll = activeSessionKind === "portrait" || portraitStatus?.status === "running";
     const isTerminal = portraitStatus?.status === "completed" || portraitStatus?.status === "failed" || portraitStatus?.status === "cancelled" || portraitStatus?.status === "interrupted";
     if (!shouldPoll || isTerminal) return;
-    const interval = setInterval(fetchPortraitStatus, 2000);
+    const interval = setInterval(fetchPortraitStatus, 1000);
     return () => clearInterval(interval);
   }, [activeSessionKind, fetchPortraitStatus, portraitStatus?.status]);
 
@@ -665,6 +665,9 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
         await sendMessage("Let's build my portrait.", undefined, {
           sessionKind: "portrait",
         });
+        for (const delay of [1000, 2000, 4000, 8000, 12000]) {
+          setTimeout(fetchPortraitStatus, delay);
+        }
         return;
       }
 
@@ -720,6 +723,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
     [
       activeSessionId,
       activeSessionKind,
+      fetchPortraitStatus,
       hasImportedData,
       isReadOnly,
       openSetupSession,
@@ -776,6 +780,8 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
       // #endregion
       void saveCurrentMessages(id, msgs);
 
+      fetchPortraitStatus();
+
       if (id === activeSessionId) {
         refreshSidebar();
         void (async () => {
@@ -799,7 +805,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
         })();
       }
     }
-  }, [streamingSessionIds, activeSessionId, getSessionMessages, saveCurrentMessages, refreshSidebar]);
+  }, [streamingSessionIds, activeSessionId, getSessionMessages, saveCurrentMessages, refreshSidebar, fetchPortraitStatus]);
 
   // Delayed CTA for setup sessions: only append once streaming has truly
   // stopped (stayed off for 3 s) to avoid premature CTAs between tool rounds.
@@ -970,6 +976,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
           onLoadSession={handleLoadSession}
           activeSessionId={activeSessionId}
           streamingSessionIds={streamingSessionIds}
+          portraitBuildRunning={portraitStatus?.status === "running"}
           collapsed={sidebarCollapsed}
           onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
           refreshKey={sidebarRefreshKey}
