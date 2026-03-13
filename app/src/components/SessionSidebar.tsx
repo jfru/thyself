@@ -328,21 +328,39 @@ export function SessionSidebar({
 
       {/* Profile indicator */}
       <div className="relative border-t border-zinc-800">
-        <button
-          onClick={handleProfileMenuToggle}
-          className="flex w-full items-center gap-2 px-4 py-3 text-left hover:bg-zinc-900 transition-colors"
-        >
-          <User size={14} className="text-zinc-500 flex-shrink-0" />
-          <span className="text-xs text-zinc-400 truncate flex-1">
-            {profile.subject_name}
-          </span>
-          <ChevronDown
-            size={12}
-            className={`text-zinc-500 transition-transform ${showProfileMenu ? "rotate-180" : ""}`}
-          />
-        </button>
+        {import.meta.env.DEV ? (
+          <button
+            onClick={handleProfileMenuToggle}
+            className="flex w-full items-center gap-2 px-4 py-3 text-left hover:bg-zinc-900 transition-colors"
+          >
+            <User size={14} className="text-zinc-500 flex-shrink-0" />
+            <span className="text-xs text-zinc-400 truncate flex-1">
+              {profile.subject_name}
+            </span>
+            <ChevronDown
+              size={12}
+              className={`text-zinc-500 transition-transform ${showProfileMenu ? "rotate-180" : ""}`}
+            />
+          </button>
+        ) : (
+          <div className="flex w-full items-center gap-2 px-4 py-3">
+            <User size={14} className="text-zinc-500 flex-shrink-0" />
+            <span className="text-xs text-zinc-400 truncate flex-1">
+              {profile.subject_name}
+            </span>
+            {profile.auth_token && (
+              <button
+                onClick={handleManageSubscription}
+                className="flex-shrink-0 text-zinc-600 hover:text-zinc-400 transition-colors"
+                title="Manage subscription"
+              >
+                <CreditCard size={12} />
+              </button>
+            )}
+          </div>
+        )}
 
-        {showProfileMenu && (
+        {import.meta.env.DEV && showProfileMenu && (
           <div className="absolute bottom-full left-0 right-0 mb-1 mx-2 rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl overflow-hidden">
             {allProfiles.map((p) => (
               <div key={p.id} className="group relative">
@@ -417,7 +435,7 @@ export function SessionSidebar({
         )}
       </div>
 
-      {confirmFinalDelete && (
+      {import.meta.env.DEV && confirmFinalDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
           <div className="bg-zinc-900 border border-zinc-700 rounded-xl px-6 py-5 max-w-sm w-full mx-4 text-center shadow-2xl">
             <p className="text-sm text-zinc-200 font-medium">Are you sure?</p>
