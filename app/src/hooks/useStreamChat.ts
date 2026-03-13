@@ -115,20 +115,87 @@ interface SendMessageOptions {
   selectedSourcesOverride?: string[];
 }
 
-export function useStreamChat(sessionIdRef: React.RefObject<string | null>, opts: StreamChatOptions = {}) {
-  const { subjectName, onboardingStatus, selectedSources, connectedSources, activeSessionKind, portraitStatus } = opts;
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [streamingSessionId, setStreamingSessionId] = useState<string | null>(null);
-  const unlistenRef = useRef<(() => void) | null>(null);
-  const streamIdRef = useRef<string | null>(null);
-  const blocksRef = useRef<ContentBlock[]>([]);
-  const toolInputBuffers = useRef<Map<number, string>>(new Map());
-  const indexMapRef = useRef<Map<number, number>>(new Map());
+interface StreamContext {
+  blocks: ContentBlock[];
+  toolInputBuffers: Map<number, string>;
+  indexMap: Map<number, number>;
+  streamId: string;
+  unlisten: (() => void) | null;
+}
+
+export function useStreamChat(opts: StreamChatOptions = {}) {
+  const optsRef = useRef(opts);
+  optsRef.current = opts;
+
+  // React state: active session's messages (drives rendering)
+  const [messages, setMessagesRaw] = useState<Message[]>([]);
+
+  // React state: which sessions are currently streaming (drives sidebar indicators)
+  const [streamingSessionIds, setStreamingSessionIds] = useState<Set<string>>(new Set());
+
+  // Which session is currently displayed on screen
+  const activeSessionIdRef = useRef<string | null>(null);
+
+  // Messages cache for all sessions — single source of truth, updated synchronously
+  const sessionMessagesRef = useRef<Map<string, Message[]>>(new Map());
+
+  // Per-session streaming context (blocks, tool buffers, stream ID, unlisten)
+  const streamContextsRef = useRef<Map<string, StreamContext>>(new Map());
+
+  // Mirror of streamingSessionIds for synchronous access in callbacks
+  const streamingIdsRef = useRef<Set<string>>(new Set());
+
+  /**
+   * Wrapped setMessages: reads prev from cache (always up to date),
+   * updates cache, then pushes to React state. Accepts same API as
+   * React's setState (value or functional updater).
+   */
+  const setMessages = useCallback((updaterOrValue: Message[] | ((prev: Message[]) => Message[])) => {
+    const activeId = activeSessionIdRef.current;
+    const prev = activeId ? (sessionMessagesRef.current.get(activeId) ?? []) : [];
+    const next = typeof updaterOrValue === "function" ? updaterOrValue(prev) : updaterOrValue;
+    if (activeId) {
+      sessionMessagesRef.current.set(activeId, next);
+    }
+    setMessagesRaw(next);
+  }, []);
+
+  const getSessionMessages = useCallback((sessionId: string): Message[] => {
+    return sessionMessagesRef.current.get(sessionId) ?? [];
+  }, []);
+
+  const isSessionStreaming = useCallback((sessionId: string): boolean => {
+    return streamingIdsRef.current.has(sessionId);
+  }, []);
+
+  /**
+   * Switch the displayed session. Loads messages from cache (or uses
+   * the provided msgs) into React state. Pass null to clear.
+   */
+  const switchToSession = useCallback((sessionId: string | null, msgs?: Message[]) => {
+    activeSessionIdRef.current = sessionId;
+    if (sessionId === null) {
+      setMessagesRaw(msgs ?? []);
+      return;
+    }
+    if (msgs !== undefined) {
+      sessionMessagesRef.current.set(sessionId, msgs);
+      setMessagesRaw(msgs);
+    } else {
+      const cached = sessionMessagesRef.current.get(sessionId) ?? [];
+      setMessagesRaw(cached);
+    }
+  }, []);
 
   const sendMessage = useCallback(
     async (userText: string, images?: ImageAttachment[], options?: SendMessageOptions, files?: FileAttachment[]) => {
-      if (isStreaming && streamingSessionId === sessionIdRef.current) return;
+      const targetSessionId = activeSessionIdRef.current;
+      if (!targetSessionId) return;
+      if (streamingIdsRef.current.has(targetSessionId)) return;
+
+      const { subjectName, onboardingStatus, selectedSources, connectedSources, activeSessionKind, portraitStatus } = optsRef.current;
+
+      const currentMessages = sessionMessagesRef.current.get(targetSessionId) ?? [];
 
       const userMsg: UserMessage = {
         role: "user",
@@ -145,35 +212,49 @@ export function useStreamChat(sessionIdRef: React.RefObject<string | null>, opts
         timestamp: Date.now(),
       };
 
-      setMessages((prev) => [...prev, userMsg, assistantMsg]);
-      setIsStreaming(true);
-      setStreamingSessionId(sessionIdRef.current);
-      blocksRef.current = [];
-      toolInputBuffers.current.clear();
-      indexMapRef.current.clear();
+      const newMessages = [...currentMessages, userMsg, assistantMsg];
+      sessionMessagesRef.current.set(targetSessionId, newMessages);
+      if (activeSessionIdRef.current === targetSessionId) {
+        setMessagesRaw(newMessages);
+      }
 
-      const streamId = `chat-${Date.now()}`;
-      streamIdRef.current = streamId;
+      const ctx: StreamContext = {
+        blocks: [],
+        toolInputBuffers: new Map(),
+        indexMap: new Map(),
+        streamId: `chat-${Date.now()}`,
+        unlisten: null,
+      };
+      streamContextsRef.current.set(targetSessionId, ctx);
+
+      streamingIdsRef.current.add(targetSessionId);
+      setStreamingSessionIds(new Set(streamingIdsRef.current));
 
       const updateAssistant = (updater: (blocks: ContentBlock[]) => ContentBlock[]) => {
-        blocksRef.current = updater(blocksRef.current);
-        const newBlocks = [...blocksRef.current];
-        setMessages((prev) => {
-          const updated = [...prev];
-          const lastIdx = updated.length - 1;
-          if (updated[lastIdx]?.role === "assistant") {
-            updated[lastIdx] = {
-              ...updated[lastIdx],
-              blocks: newBlocks,
-              isStreaming: true,
-            } as AssistantMessage;
-          }
-          return updated;
-        });
+        ctx.blocks = updater(ctx.blocks);
+        const newBlocks = [...ctx.blocks];
+
+        const cached = sessionMessagesRef.current.get(targetSessionId);
+        if (!cached) return;
+
+        const updated = [...cached];
+        const lastIdx = updated.length - 1;
+        if (updated[lastIdx]?.role === "assistant") {
+          updated[lastIdx] = {
+            ...updated[lastIdx],
+            blocks: newBlocks,
+            isStreaming: true,
+          } as AssistantMessage;
+        }
+        sessionMessagesRef.current.set(targetSessionId, updated);
+
+        if (activeSessionIdRef.current === targetSessionId) {
+          setMessagesRaw(updated);
+        }
       };
 
       const resolveIndex = (claudeIdx: number): number =>
-        indexMapRef.current.get(claudeIdx) ?? claudeIdx;
+        ctx.indexMap.get(claudeIdx) ?? claudeIdx;
 
       const handleEvent = (payload: StreamEventPayload) => {
         const { event_type, data } = payload;
@@ -190,9 +271,8 @@ export function useStreamChat(sessionIdRef: React.RefObject<string | null>, opts
             } | undefined;
             if (!block) break;
 
-            // Record where this Claude index maps to in our blocks array
-            const targetIdx = blocksRef.current.length;
-            indexMapRef.current.set(claudeIdx, targetIdx);
+            const targetIdx = ctx.blocks.length;
+            ctx.indexMap.set(claudeIdx, targetIdx);
 
             if (block.type === "thinking") {
               updateAssistant((blocks) => [
@@ -222,7 +302,7 @@ export function useStreamChat(sessionIdRef: React.RefObject<string | null>, opts
                   status: "running",
                 },
               ]);
-              toolInputBuffers.current.set(targetIdx, "");
+              ctx.toolInputBuffers.set(targetIdx, "");
             } else if (block.type === "web_search_tool_result") {
               const toolUseId = (data.content_block as Record<string, unknown>)?.tool_use_id as string;
               const searchContent = (data.content_block as Record<string, unknown>)?.content as WebSearchResult[] | undefined;
@@ -268,8 +348,8 @@ export function useStreamChat(sessionIdRef: React.RefObject<string | null>, opts
 
           case "tool_input_delta": {
             const idx = resolveIndex((data.index as number) ?? 0);
-            const current = toolInputBuffers.current.get(idx) || "";
-            toolInputBuffers.current.set(
+            const current = ctx.toolInputBuffers.get(idx) || "";
+            ctx.toolInputBuffers.set(
               idx,
               current + ((data.partial_json as string) || "")
             );
@@ -294,7 +374,7 @@ export function useStreamChat(sessionIdRef: React.RefObject<string | null>, opts
                   return { ...b, isStreaming: false, ...(citations ? { citations } : {}) };
                 }
                 if (b.type === "tool_use") {
-                  const jsonStr = toolInputBuffers.current.get(idx) || "{}";
+                  const jsonStr = ctx.toolInputBuffers.get(idx) || "{}";
                   let input = {};
                   try {
                     input = JSON.parse(jsonStr);
@@ -340,8 +420,9 @@ export function useStreamChat(sessionIdRef: React.RefObject<string | null>, opts
           }
 
           case "message_stop": {
-            setMessages((prev) => {
-              const updated = [...prev];
+            const cached = sessionMessagesRef.current.get(targetSessionId);
+            if (cached) {
+              const updated = [...cached];
               const lastIdx = updated.length - 1;
               if (updated[lastIdx]?.role === "assistant") {
                 updated[lastIdx] = {
@@ -349,21 +430,28 @@ export function useStreamChat(sessionIdRef: React.RefObject<string | null>, opts
                   isStreaming: false,
                 } as AssistantMessage;
               }
-              return updated;
-            });
-            setIsStreaming(false);
-            setStreamingSessionId(null);
-            if (unlistenRef.current) {
-              unlistenRef.current();
-              unlistenRef.current = null;
+              sessionMessagesRef.current.set(targetSessionId, updated);
+
+              if (activeSessionIdRef.current === targetSessionId) {
+                setMessagesRaw(updated);
+              }
             }
+
+            streamingIdsRef.current.delete(targetSessionId);
+            setStreamingSessionIds(new Set(streamingIdsRef.current));
+
+            if (ctx.unlisten) {
+              ctx.unlisten();
+              ctx.unlisten = null;
+            }
+            streamContextsRef.current.delete(targetSessionId);
             break;
           }
         }
       };
 
       const rawApiMessages: { role: string; content: unknown }[] = [];
-      for (const m of [...messages, userMsg].filter((m) => m.role !== "system")) {
+      for (const m of [...currentMessages, userMsg].filter((m) => m.role !== "system")) {
         if (m.role === "user") {
           const um = m as UserMessage;
           const hasImages = !!um.images?.length;
@@ -423,19 +511,19 @@ export function useStreamChat(sessionIdRef: React.RefObject<string | null>, opts
         } else if (shouldUseOnboardingPrompt) {
           systemPrompt = buildOnboardingPrompt(subjectName || "User", effectiveSelectedSources);
         } else {
-          systemPrompt = buildSystemPrompt(subjectName || "User", sessionIdRef.current ?? undefined);
+          systemPrompt = buildSystemPrompt(subjectName || "User", targetSessionId);
         }
 
         // #region agent log
         fetch('http://127.0.0.1:7709/ingest/d9149a58-da3e-4f10-b872-bd18ccc36ca6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'2ee486'},body:JSON.stringify({sessionId:'2ee486',location:'useStreamChat.ts:278',message:'system prompt selected',data:{isOnboarding: shouldUseOnboardingPrompt, onboardingStatus, selectedSources, activeSessionKind: effectiveSessionKind, promptStart: systemPrompt.substring(0, 80)},timestamp:Date.now()})}).catch(()=>{});
         // #endregion
 
-        unlistenRef.current = await streamChat(
+        ctx.unlisten = await streamChat(
           {
             messages: apiMessages,
             systemPrompt,
             tools: [],
-            streamId,
+            streamId: ctx.streamId,
           },
           handleEvent
         );
@@ -450,27 +538,34 @@ export function useStreamChat(sessionIdRef: React.RefObject<string | null>, opts
             isStreaming: false,
           },
         ]);
-        setIsStreaming(false);
-        setStreamingSessionId(null);
+        streamingIdsRef.current.delete(targetSessionId);
+        setStreamingSessionIds(new Set(streamingIdsRef.current));
+        streamContextsRef.current.delete(targetSessionId);
       }
     },
-    [messages, isStreaming, onboardingStatus, selectedSources, connectedSources, subjectName, activeSessionKind]
+    // All data read from refs — no closure dependencies needed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
   );
 
-  const stopStreaming = useCallback(() => {
-    if (!isStreaming) return;
+  const stopStreaming = useCallback((sessionId?: string) => {
+    const targetId = sessionId ?? activeSessionIdRef.current;
+    if (!targetId) return;
+    if (!streamingIdsRef.current.has(targetId)) return;
 
-    if (streamIdRef.current) {
-      stopChat(streamIdRef.current);
+    const ctx = streamContextsRef.current.get(targetId);
+    if (!ctx) return;
+
+    stopChat(ctx.streamId);
+
+    if (ctx.unlisten) {
+      ctx.unlisten();
+      ctx.unlisten = null;
     }
 
-    if (unlistenRef.current) {
-      unlistenRef.current();
-      unlistenRef.current = null;
-    }
-
-    setMessages((prev) => {
-      const updated = [...prev];
+    const cached = sessionMessagesRef.current.get(targetId);
+    if (cached) {
+      const updated = [...cached];
       const lastIdx = updated.length - 1;
       if (updated[lastIdx]?.role === "assistant") {
         const am = updated[lastIdx] as AssistantMessage;
@@ -491,17 +586,35 @@ export function useStreamChat(sessionIdRef: React.RefObject<string | null>, opts
           }),
         } as AssistantMessage;
       }
-      return updated;
-    });
+      sessionMessagesRef.current.set(targetId, updated);
 
-    setIsStreaming(false);
-    setStreamingSessionId(null);
-    streamIdRef.current = null;
-  }, [isStreaming]);
+      if (activeSessionIdRef.current === targetId) {
+        setMessagesRaw(updated);
+      }
+    }
 
-  const clearMessages = useCallback(() => {
-    setMessages([]);
+    streamingIdsRef.current.delete(targetId);
+    setStreamingSessionIds(new Set(streamingIdsRef.current));
+    streamContextsRef.current.delete(targetId);
   }, []);
 
-  return { messages, isStreaming, streamingSessionId, sendMessage, stopStreaming, clearMessages, setMessages };
+  const clearMessages = useCallback(() => {
+    const activeId = activeSessionIdRef.current;
+    if (activeId) {
+      sessionMessagesRef.current.set(activeId, []);
+    }
+    setMessagesRaw([]);
+  }, []);
+
+  return {
+    messages,
+    streamingSessionIds,
+    sendMessage,
+    stopStreaming,
+    clearMessages,
+    setMessages,
+    switchToSession,
+    getSessionMessages,
+    isSessionStreaming,
+  };
 }

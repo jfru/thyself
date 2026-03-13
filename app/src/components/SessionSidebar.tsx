@@ -7,7 +7,7 @@ interface SessionSidebarProps {
   onNewSession: () => void;
   onLoadSession: (sessionId: string) => void;
   activeSessionId: string | null;
-  streamingSessionId: string | null;
+  streamingSessionIds: Set<string>;
   collapsed: boolean;
   onToggle: () => void;
   refreshKey: number;
@@ -21,7 +21,7 @@ export function SessionSidebar({
   onNewSession,
   onLoadSession,
   activeSessionId,
-  streamingSessionId,
+  streamingSessionIds,
   collapsed,
   onToggle,
   refreshKey,
@@ -174,7 +174,7 @@ export function SessionSidebar({
                 <>
                   {visible.map((session) => {
                     const isActive = session.id === activeSessionId;
-                    const isSessionStreaming = session.id === streamingSessionId;
+                    const isThisStreaming = streamingSessionIds.has(session.id);
                     return (
                       <button
                         key={session.id}
@@ -185,7 +185,7 @@ export function SessionSidebar({
                             : "hover:bg-zinc-900 border-l-2 border-transparent"
                         }`}
                       >
-                        {isSessionStreaming ? (
+                        {isThisStreaming ? (
                           <Loader2
                             size={14}
                             className="mt-0.5 flex-shrink-0 text-blue-400 animate-spin"
@@ -245,7 +245,7 @@ export function SessionSidebar({
             )}
             {gettingStartedOpen && setupSessions.map((session) => {
               const isActive = session.id === activeSessionId;
-              const isSessionStreaming = session.id === streamingSessionId;
+              const isThisStreaming = streamingSessionIds.has(session.id);
               const isPortrait = session.kind === "portrait";
               const Icon = isPortrait ? Sparkles : Settings;
               const activeColor = isPortrait ? "text-amber-400" : "text-purple-400";
@@ -260,7 +260,7 @@ export function SessionSidebar({
                       : "hover:bg-zinc-900 border-l-2 border-transparent"
                   }`}
                 >
-                  {isSessionStreaming ? (
+                  {isThisStreaming ? (
                     <Loader2
                       size={14}
                       className={`mt-0.5 flex-shrink-0 animate-spin ${isActive ? activeColor : inactiveColor}`}
