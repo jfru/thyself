@@ -74,6 +74,7 @@ export interface SystemMessage {
   role: "system";
   text: string;
   subtitle?: string;
+  learnMore?: string;
   action?: {
     label: string;
     message: string;
