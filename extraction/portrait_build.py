@@ -96,7 +96,7 @@ def run_portrait_build(run_id: int, db_path: Path):
 
 
 def _run_pipeline(run_id: int, db_path: Path, api_key: str):
-    from .prepare import plan_batches
+    from .prepare import plan_batches, fetch_all_messages
     from .run import run_all, RESULTS_DIR
     from .ingest_results import ingest_from_files
     from .synthesize import (
@@ -114,7 +114,8 @@ def _run_pipeline(run_id: int, db_path: Path, api_key: str):
     print("Phase: preparing")
     _check_cancelled()
 
-    planned = plan_batches(db_path)
+    all_messages = fetch_all_messages(db_path)
+    planned = plan_batches(all_messages)
     total = len(planned)
     if total == 0:
         _update_run(db_path, run_id, status="failed",
@@ -122,7 +123,7 @@ def _run_pipeline(run_id: int, db_path: Path, api_key: str):
                      finished_at=time.strftime("%Y-%m-%d %H:%M:%S"))
         return
 
-    months_covered = f"{planned[0].months[0]} to {planned[-1].months[-1]}"
+    months_covered = f"{planned[0].start_date} to {planned[-1].end_date}"
     _update_run(db_path, run_id, phase="extracting",
                 total_batches=total, completed_batches=0,
                 extraction_months_covered=months_covered)

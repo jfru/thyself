@@ -1,21 +1,16 @@
 """
 Run life extraction over token-sized batches via the Claude API.
 
-Batches are sized to fill the ~1M context window rather than being
-bucketed by calendar month. Use `python -m extraction.prepare --batches`
-to preview the batch plan before running.
+Batches are packed at the message level to fill the ~1M context window.
+Use `python -m extraction.prepare --batches` to preview the batch plan.
 
-If a batch is rejected for exceeding the token limit, it is automatically
-split in half and the remaining months are requeued. No content is trimmed.
-Batches always run in order so each receives context from the previous one.
+Batches run in order so each receives context from the previous one.
 """
 
 import json
 import os
-import re
 import sys
 import time
-from collections import deque
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -24,51 +19,13 @@ load_dotenv()
 import anthropic
 
 from config import EXTRACTION_RESULTS_DIR, SUBJECT_NAME, CLAUDE_MODEL, CLAUDE_BETA_FLAGS, DB_PATH
-from .prepare import BatchSpec, build_batch_chunk, plan_batches
+from .prepare import BatchSpec, build_batch_chunk, plan_batches, fetch_all_messages
 from .prompt import SYSTEM_PROMPT
 from .schema import create_tables
 
 RESULTS_DIR = EXTRACTION_RESULTS_DIR
 MODEL = CLAUDE_MODEL
 BETA_FLAGS = CLAUDE_BETA_FLAGS
-
-
-def _split_chunk_by_date(chunk: str, batch: BatchSpec) -> tuple[str | None, str | None]:
-    """Split a formatted chunk roughly in half at a message boundary.
-
-    Finds message headers (lines starting with '[') and splits at the
-    midpoint, creating two valid chunks with updated headers.
-    """
-    lines = chunk.split("\n")
-
-    # Find all message header line indices
-    msg_indices = [i for i, line in enumerate(lines) if line.startswith("[") and " | " in line]
-
-    if len(msg_indices) < 4:
-        return None, None
-
-    mid_msg = len(msg_indices) // 2
-    split_line = msg_indices[mid_msg]
-
-    # Extract the date from the split point for labelling
-    split_header = lines[split_line]
-    split_date = split_header[1:17].strip() if len(split_header) > 17 else "mid"
-
-    # Find the header section (everything before the first message)
-    first_msg = msg_indices[0]
-    header_lines = lines[:first_msg]
-
-    first_chunk_lines = header_lines + [
-        f"(Part 1 of 2 — messages up to {split_date})\n",
-        "---\n",
-    ] + lines[first_msg:split_line]
-
-    second_chunk_lines = header_lines + [
-        f"(Part 2 of 2 — messages from {split_date} onward)\n",
-        "---\n",
-    ] + lines[split_line:]
-
-    return "\n".join(first_chunk_lines), "\n".join(second_chunk_lines)
 
 
 def _send_to_api(client, system, chunk):
@@ -85,52 +42,6 @@ def _send_to_api(client, system, chunk):
             raw_text += text
         response = stream.get_final_message()
     return raw_text, response.usage.input_tokens, response.usage.output_tokens
-
-
-def _split_batch(batch: BatchSpec) -> tuple[BatchSpec, BatchSpec]:
-    """Split a batch's months in half, returning two new BatchSpecs."""
-    from .prepare import _month_end, _estimate_tokens, _fetch_all_for_month
-    from .prepare import _load_contact_cache, _load_conversation_labels, DB_PATH
-    import sqlite3
-
-    months = batch.months
-    mid = len(months) // 2
-    if mid == 0:
-        mid = 1  # at least one month in the first half
-
-    first_months = months[:mid]
-    second_months = months[mid:]
-
-    conn = sqlite3.connect(DB_PATH)
-    contact_cache = _load_contact_cache(conn)
-    conv_cache = _load_conversation_labels(conn)
-    first_tokens = sum(
-        _estimate_tokens(_fetch_all_for_month(conn, m, contact_cache, conv_cache))
-        for m in first_months
-    )
-    second_tokens = sum(
-        _estimate_tokens(_fetch_all_for_month(conn, m, contact_cache, conv_cache))
-        for m in second_months
-    )
-    conn.close()
-
-    first = BatchSpec(
-        batch_num=batch.batch_num,
-        total_batches=0,
-        months=first_months,
-        start_date=f"{first_months[0]}-01",
-        end_date=_month_end(first_months[-1]),
-        approx_tokens=first_tokens,
-    )
-    second = BatchSpec(
-        batch_num=0,
-        total_batches=0,
-        months=second_months,
-        start_date=f"{second_months[0]}-01",
-        end_date=_month_end(second_months[-1]),
-        approx_tokens=second_tokens,
-    )
-    return first, second
 
 
 def _auto_resume() -> tuple[int, str | None]:
@@ -153,30 +64,22 @@ def _auto_resume() -> tuple[int, str | None]:
             raw = raw[:-3].rstrip()
         data = json.loads(raw)
 
-        # Handle both new per-month format and old single-period format
         if "months" in data and isinstance(data["months"], list) and data["months"]:
-            last_month_data = data["months"][-1]
-            summary = last_month_data.get("summary")
-            last_month = last_month_data.get("month")
+            summary = data["months"][-1].get("summary")
             period = data.get("batch_period", "")
         else:
             period = data.get("period", data.get("batch_period", ""))
             summary = data.get("summary", data.get("batch_summary"))
-            last_month = None
-            if " to " in period:
-                end_date = period.split(" to ")[1]
-                last_month = end_date[:7]
 
         print(f"  Found {len(existing)} existing batches (through {period})")
-        return last_num + 1, summary, last_month
+        return last_num + 1, summary
     except (json.JSONDecodeError, KeyError, IndexError):
-        return last_num + 1, None, None
+        return last_num + 1, None
 
 
 def run_all(
     start_batch: int | None = None,
     end_batch: int | None = None,
-    after_month: str | None = None,
     db_path: str | Path | None = None,
     on_batch_complete: "Callable[[int, int], None] | None" = None,
 ) -> list[dict]:
@@ -194,18 +97,13 @@ def run_all(
 
     create_tables(db)
 
-    planned = plan_batches(db)
-    print(f"Planned {len(planned)} batches across full timeline")
+    print("Loading messages...", end=" ", flush=True)
+    all_messages = fetch_all_messages(db)
+    print(f"{len(all_messages):,} messages loaded.")
 
-    # Filter to only include batches with months after after_month
-    if after_month:
-        planned = [b for b in planned if b.months[-1] > after_month]
-        # Trim leading months from the first batch if it straddles the boundary
-        if planned and planned[0].months[0] <= after_month:
-            first = planned[0]
-            first.months = [m for m in first.months if m > after_month]
-            if not first.months:
-                planned = planned[1:]
+    planned = plan_batches(all_messages)
+    total_planned = len(planned)
+    print(f"Planned {total_planned} batches across full timeline")
 
     if start_batch:
         planned = [b for b in planned if b.batch_num >= start_batch]
@@ -216,17 +114,9 @@ def run_all(
         print("No batches to run.")
         return []
 
-    queue = deque(planned)
-
-    # Determine starting batch number
-    if after_month:
-        next_num, prev_summary, _ = _auto_resume()
-        batch_counter = next_num
-        print(f"  Resuming from batch {batch_counter} (after {after_month})")
-    elif start_batch:
-        batch_counter = start_batch
-        prev_summary = None
-        # Load prior context
+    # Determine prior context for resume
+    prev_summary = None
+    if start_batch and start_batch > 1:
         prior_path = RESULTS_DIR / f"batch_{start_batch - 1:02d}.json"
         if prior_path.exists():
             try:
@@ -236,39 +126,25 @@ def run_all(
                 if raw.endswith("```"):
                     raw = raw[:-3].rstrip()
                 prior = json.loads(raw)
-                prev_summary = prior.get("summary")
+                if "months" in prior and isinstance(prior["months"], list) and prior["months"]:
+                    prev_summary = prior["months"][-1].get("summary")
+                else:
+                    prev_summary = prior.get("summary") or prior.get("batch_summary")
                 print(f"  Loaded prior context from batch {start_batch - 1}")
             except (json.JSONDecodeError, KeyError):
                 pass
-    else:
-        batch_counter = 1
-        prev_summary = None
 
-    print(f"Running {len(queue)} batches starting from #{batch_counter}")
+    print(f"Running {len(planned)} batches starting from #{planned[0].batch_num}")
 
     results = []
     system = SYSTEM_PROMPT.replace("{name}", SUBJECT_NAME)
 
-    while queue:
-        item = queue.popleft()
+    for batch in planned:
+        print(f"\n{'='*60}")
+        print(f"Batch {batch.batch_num}/{batch.total_batches}: {batch.start_date} to {batch.end_date}")
+        print(f"  {len(batch.months)} months, ~{batch.approx_tokens:,} est. tokens")
 
-        # Items can be BatchSpec objects or ("raw_chunk", chunk_text, original_batch) tuples
-        if isinstance(item, tuple) and item[0] == "raw_chunk":
-            _, chunk, batch = item
-            batch.batch_num = batch_counter
-            m_range = f"{batch.months[0]} (split)" if len(batch.months) == 1 else f"{batch.months[0]} to {batch.months[-1]}"
-            est = len(chunk) // 3
-            print(f"\n{'='*60}")
-            print(f"Batch {batch_counter}: {m_range}")
-            print(f"  ~{est:,} est. tokens (pre-split chunk)")
-        else:
-            batch = item
-            batch.batch_num = batch_counter
-            m_range = f"{batch.months[0]} to {batch.months[-1]}" if len(batch.months) > 1 else batch.months[0]
-            print(f"\n{'='*60}")
-            print(f"Batch {batch_counter}: {m_range}")
-            print(f"  {len(batch.months)} months, ~{batch.approx_tokens:,} est. tokens")
-            chunk = build_batch_chunk(batch, db, prev_summary=prev_summary)
+        chunk = build_batch_chunk(all_messages, batch, prev_summary=prev_summary)
 
         print(f"  Sending to {MODEL} (streaming)...")
         t0 = time.time()
@@ -281,52 +157,18 @@ def run_all(
             print(f"  Input tokens: {input_tokens:,}")
             print(f"  Output tokens: {output_tokens:,}")
 
-        except anthropic.BadRequestError as e:
-            error_msg = str(e)
-            token_match = re.search(r"(\d+) tokens > (\d+) maximum", error_msg)
-
-            if token_match and len(batch.months) > 1:
-                actual = int(token_match.group(1))
-                limit = int(token_match.group(2))
-                print(f"  Too long: {actual:,} tokens (limit {limit:,})")
-                print(f"  Splitting {len(batch.months)} months in half and requeuing...")
-
-                first_half, second_half = _split_batch(batch)
-                queue.appendleft(second_half)
-                queue.appendleft(first_half)
-                continue  # retry with smaller batch, don't increment counter
-
-            elif token_match and len(batch.months) == 1:
-                actual = int(token_match.group(1))
-                print(f"  Single month {batch.months[0]} is {actual:,} tokens — splitting by date...")
-
-                first_half, second_half = _split_chunk_by_date(chunk, batch)
-                if first_half and second_half:
-                    queue.appendleft(("raw_chunk", second_half, batch))
-                    queue.appendleft(("raw_chunk", first_half, batch))
-                    continue
-                else:
-                    print(f"  Could not split further. Stopping.")
-                    print(f"  Resume after fixing with: python -m extraction.run --from {batch_counter}")
-                    sys.exit(1)
-            else:
-                raise
-
         except Exception as e:
             if "timed out" in str(e).lower() or "timeout" in str(e).lower():
-                print(f"\n  TIMEOUT on batch {batch_counter}: {e}")
-                print(f"  Retrying in 30 seconds...")
-                time.sleep(30)
-                queue.appendleft(batch)  # put it back at the front
-                continue
+                print(f"\n  TIMEOUT on batch {batch.batch_num}: {e}")
+                print(f"  Resume with: python -m extraction.run --from {batch.batch_num}")
+                sys.exit(1)
             else:
                 print(f"\n  FATAL ERROR: {e}")
-                print(f"  Resume with: python -m extraction.run --from {batch_counter}")
+                print(f"  Resume with: python -m extraction.run --from {batch.batch_num}")
                 sys.exit(1)
 
-        # Save result
         RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-        result_path = RESULTS_DIR / f"batch_{batch_counter:02d}.json"
+        result_path = RESULTS_DIR / f"batch_{batch.batch_num:02d}.json"
         result_path.write_text(raw_text)
         print(f"  Saved to {result_path}")
 
@@ -347,10 +189,9 @@ def run_all(
             prev_summary = result["months"][-1].get("summary")
         else:
             prev_summary = result.get("summary") or result.get("batch_summary")
-        batch_counter += 1
 
         if on_batch_complete:
-            on_batch_complete(len(results), len(planned))
+            on_batch_complete(len(results), total_planned)
 
     print(f"\n{'='*60}")
     print(f"Completed {len(results)} batches")
@@ -361,7 +202,6 @@ def run_all(
 if __name__ == "__main__":
     start = None
     end = None
-    after = None
     args = sys.argv[1:]
 
     if "--from" in args:
@@ -373,18 +213,12 @@ if __name__ == "__main__":
     if "--batch" in args:
         idx = args.index("--batch")
         start = end = int(args[idx + 1])
-    if "--after" in args:
-        idx = args.index("--after")
-        after = args[idx + 1]  # e.g. "2017-06"
     if "--resume" in args:
-        _, _, last_month = _auto_resume()
-        if last_month:
-            after = last_month
-            print(f"Auto-resuming after {after}")
-        else:
-            print("No existing batches found, starting from scratch")
+        next_num, _ = _auto_resume()
+        start = next_num
+        print(f"Auto-resuming from batch {start}")
 
-    results = run_all(start_batch=start, end_batch=end, after_month=after)
+    results = run_all(start_batch=start, end_batch=end)
     for r in results:
         p = r.get("period", "?")
         s = r.get("summary", "(no summary)")
