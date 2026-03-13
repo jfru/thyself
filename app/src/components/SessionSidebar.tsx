@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { invokeCommand } from "../lib/tauriBridge";
+import { invokeCommand, getServerEnv, setServerEnv } from "../lib/tauriBridge";
+import type { ServerEnv } from "../lib/tauriBridge";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Plus, MessageSquare, PanelLeftClose, PanelLeft, User, ChevronDown, ChevronRight, Trash2, Settings, Sparkles, Loader2, MessageSquareHeart, CreditCard } from "lucide-react";
 import { FeedbackModal } from "./FeedbackModal";
@@ -43,6 +44,8 @@ export function SessionSidebar({
   const [conversationsShowAll, setConversationsShowAll] = useState(false);
   const [gettingStartedOpen, setGettingStartedOpen] = useState(true);
   const [showFeedback, setShowFeedback] = useState(false);
+  const [serverEnv, setServerEnvState] = useState<ServerEnv>(getServerEnv);
+  const showDevTools = import.meta.env.DEV && serverEnv !== "prod";
 
   useEffect(() => {
     loadSessions();
@@ -161,14 +164,22 @@ export function SessionSidebar({
   return (
     <div className="flex w-64 flex-col border-r border-zinc-800 bg-zinc-950">
       <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
-        <h2 className="text-sm font-medium text-zinc-300">Sessions</h2>
-        <div className="flex gap-1">
+        <h2 className="text-sm font-semibold tracking-widest text-zinc-300">THYSELF</h2>
+        <div className="flex items-center gap-1">
           <button
-            onClick={onNewSession}
-            className="rounded-lg p-1.5 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors"
-            title="New session"
+            onClick={() => {
+              const next = serverEnv === "dev" ? "prod" : "dev";
+              setServerEnv(next);
+              setServerEnvState(next);
+            }}
+            className={`rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider transition-colors ${
+              serverEnv === "prod"
+                ? "bg-emerald-900/60 text-emerald-400 hover:bg-emerald-800/60"
+                : "bg-zinc-800 text-zinc-500 hover:bg-zinc-700"
+            }`}
+            title={`Switch to ${serverEnv === "dev" ? "prod" : "dev"}`}
           >
-            <Plus size={16} />
+            {serverEnv}
           </button>
           <button
             onClick={onToggle}
@@ -179,13 +190,6 @@ export function SessionSidebar({
           </button>
         </div>
       </div>
-      <button
-        onClick={() => setShowFeedback(true)}
-        className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-xs text-amber-500/70 hover:text-amber-400 hover:bg-zinc-900 transition-colors border-b border-zinc-800"
-      >
-        <MessageSquareHeart size={14} />
-        Send Feedback
-      </button>
       {showFeedback && <FeedbackModal onClose={() => setShowFeedback(false)} />}
       <div className="flex-1 overflow-y-auto">
         {sessions.length === 0 ? (
@@ -195,16 +199,25 @@ export function SessionSidebar({
         ) : (
           <div className="py-2">
             {conversationSessions.length > 0 && (
-              <button
-                onClick={() => setConversationsOpen((v) => !v)}
-                className="flex w-full items-center gap-1 px-4 py-1 text-[10px] uppercase tracking-wider text-zinc-600 hover:text-zinc-400 transition-colors"
-              >
-                <ChevronRight
-                  size={10}
-                  className={`transition-transform ${conversationsOpen ? "rotate-90" : ""}`}
-                />
-                Conversations
-              </button>
+              <div className="flex items-center justify-between px-4 py-1">
+                <button
+                  onClick={() => setConversationsOpen((v) => !v)}
+                  className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-zinc-600 hover:text-zinc-400 transition-colors"
+                >
+                  <ChevronRight
+                    size={10}
+                    className={`transition-transform ${conversationsOpen ? "rotate-90" : ""}`}
+                  />
+                  Sessions
+                </button>
+                <button
+                  onClick={onNewSession}
+                  className="rounded p-0.5 text-zinc-600 hover:text-zinc-300 transition-colors"
+                  title="New session"
+                >
+                  <Plus size={12} />
+                </button>
+              </div>
             )}
             {conversationsOpen && (() => {
               const COLLAPSED_LIMIT = 5;
@@ -333,43 +346,48 @@ export function SessionSidebar({
         )}
       </div>
 
-      {/* Profile indicator */}
       <div className="relative border-t border-zinc-800">
-        {import.meta.env.DEV ? (
+        {profile.auth_token && (
+          <button
+            onClick={handleManageSubscription}
+            className="flex w-full items-center gap-2 px-4 py-1.5 text-left text-[11px] text-zinc-600 hover:text-zinc-300 hover:bg-zinc-900 transition-colors"
+          >
+            <CreditCard size={12} className="flex-shrink-0" />
+            Manage subscription
+          </button>
+        )}
+        <button
+          onClick={() => setShowFeedback(true)}
+          className="flex w-full items-center gap-2 px-4 py-1.5 text-left text-[11px] text-zinc-600 hover:text-zinc-300 hover:bg-zinc-900 transition-colors"
+        >
+          <MessageSquareHeart size={12} className="flex-shrink-0" />
+          Send feedback
+        </button>
+
+        {showDevTools ? (
           <button
             onClick={handleProfileMenuToggle}
-            className="flex w-full items-center gap-2 px-4 py-3 text-left hover:bg-zinc-900 transition-colors"
+            className="flex w-full items-center gap-2 px-4 py-2.5 text-left border-t border-zinc-800/60 hover:bg-zinc-900 transition-colors"
           >
             <User size={14} className="text-zinc-500 flex-shrink-0" />
-            <span className="text-xs text-zinc-400 truncate flex-1">
+            <span className="text-[10px] font-medium uppercase tracking-wider text-zinc-500 truncate flex-1">
               {profile.subject_name}
             </span>
             <ChevronDown
-              size={12}
-              className={`text-zinc-500 transition-transform ${showProfileMenu ? "rotate-180" : ""}`}
+              size={10}
+              className={`text-zinc-600 transition-transform ${showProfileMenu ? "rotate-180" : ""}`}
             />
           </button>
         ) : (
-          <div>
-            {profile.auth_token && (
-              <button
-                onClick={handleManageSubscription}
-                className="flex w-full items-center gap-2 px-4 pt-3 py-2 text-left text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
-              >
-                <CreditCard size={12} className="flex-shrink-0" />
-                Manage subscription
-              </button>
-            )}
-            <div className="flex w-full items-center gap-2 px-4 py-3">
-              <User size={14} className="text-zinc-500 flex-shrink-0" />
-              <span className="text-xs text-zinc-400 truncate flex-1">
-                {profile.subject_name}
-              </span>
-            </div>
+          <div className="flex w-full items-center gap-2 px-4 py-2.5 border-t border-zinc-800/60">
+            <User size={14} className="text-zinc-500 flex-shrink-0" />
+            <span className="text-[10px] font-medium uppercase tracking-wider text-zinc-500 truncate flex-1">
+              {profile.subject_name}
+            </span>
           </div>
         )}
 
-        {import.meta.env.DEV && showProfileMenu && (
+        {showDevTools && showProfileMenu && (
           <div className="absolute bottom-full left-0 right-0 mb-1 mx-2 rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl overflow-hidden">
             {allProfiles.map((p) => (
               <div key={p.id} className="group relative">
@@ -424,18 +442,9 @@ export function SessionSidebar({
                 )}
               </div>
             ))}
-            {profile.auth_token && (
-              <button
-                onClick={handleManageSubscription}
-                className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200 transition-colors border-t border-zinc-800"
-              >
-                <CreditCard size={12} />
-                Manage subscription
-              </button>
-            )}
             <button
               onClick={handleNewProfile}
-              className={`flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200 transition-colors ${!profile.auth_token ? "border-t border-zinc-800" : ""}`}
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200 transition-colors border-t border-zinc-800"
             >
               <Plus size={12} />
               New profile
@@ -444,7 +453,7 @@ export function SessionSidebar({
         )}
       </div>
 
-      {import.meta.env.DEV && confirmFinalDelete && (
+      {showDevTools && confirmFinalDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
           <div className="bg-zinc-900 border border-zinc-700 rounded-xl px-6 py-5 max-w-sm w-full mx-4 text-center shadow-2xl">
             <p className="text-sm text-zinc-200 font-medium">Are you sure?</p>

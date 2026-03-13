@@ -176,7 +176,7 @@ function App() {
       key={phase.profile.id}
       profile={phase.profile}
       onProfileSwitch={handleProfileSwitch}
-      onNewProfile={import.meta.env.DEV ? () => setPhase({ kind: "onboarding-welcome" }) : () => {}}
+      onNewProfile={() => setPhase({ kind: "onboarding-welcome" })}
       onDeleteProfile={handleDeleteProfile}
     />
   );
