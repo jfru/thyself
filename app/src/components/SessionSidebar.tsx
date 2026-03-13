@@ -166,21 +166,23 @@ export function SessionSidebar({
       <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
         <h2 className="text-sm font-semibold tracking-widest text-zinc-300">THYSELF</h2>
         <div className="flex items-center gap-1">
-          <button
-            onClick={() => {
-              const next = serverEnv === "dev" ? "prod" : "dev";
-              setServerEnv(next);
-              setServerEnvState(next);
-            }}
-            className={`rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider transition-colors ${
-              serverEnv === "prod"
-                ? "bg-emerald-900/60 text-emerald-400 hover:bg-emerald-800/60"
-                : "bg-zinc-800 text-zinc-500 hover:bg-zinc-700"
-            }`}
-            title={`Switch to ${serverEnv === "dev" ? "prod" : "dev"}`}
-          >
-            {serverEnv}
-          </button>
+          {import.meta.env.DEV && (
+            <button
+              onClick={() => {
+                const next = serverEnv === "dev" ? "prod" : "dev";
+                setServerEnv(next);
+                setServerEnvState(next);
+              }}
+              className={`rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider transition-colors ${
+                serverEnv === "prod"
+                  ? "bg-emerald-900/60 text-emerald-400 hover:bg-emerald-800/60"
+                  : "bg-zinc-800 text-zinc-500 hover:bg-zinc-700"
+              }`}
+              title={`Switch to ${serverEnv === "dev" ? "prod" : "dev"}`}
+            >
+              {serverEnv}
+            </button>
+          )}
           <button
             onClick={onToggle}
             className="rounded-lg p-1.5 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors"
