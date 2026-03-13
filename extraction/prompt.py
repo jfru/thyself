@@ -212,12 +212,12 @@ Return ONLY the JSON object. No preamble, no commentary outside the JSON.\
 BATCH_HEADER_TEMPLATE = """\
 # Batch {batch_num} of {total_batches}: {start_date} to {end_date}
 
-**Months in this batch:** {months_list}
+**Calendar months in this batch:** {months_list}
 
-Below is a batch of personal communications spanning the period above, \
-drawn from all available sources. This batch contains approximately \
-{approx_tokens:,} tokens of source material. Read everything, then produce \
-a separate extraction for EACH month listed above.
+Below are personal communications spanning the period above, drawn from all \
+available sources. This batch contains approximately {approx_tokens:,} tokens \
+of source material. Read everything, then produce a separate extraction for \
+EACH calendar month listed above.
 
 """
 

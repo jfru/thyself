@@ -1,9 +1,9 @@
 """
-Prepare monthly chunks from the message corpus for life extraction.
+Prepare token-sized batches from the message corpus for life extraction.
 
-Pulls data from all four source tables (messages, chatgpt_messages,
-gmail_messages) and assembles them into chronologically interleaved
-monthly chunks ready to send to Claude.
+Loads all messages from all source tables (messages, chatgpt_messages,
+gmail_messages), sorts them chronologically, and packs them into
+batches sized to fill the ~1M context window.
 """
 
 import json
@@ -66,10 +66,9 @@ def _load_contact_cache(conn: sqlite3.Connection) -> dict[int, str]:
 
 
 def _load_conversation_labels(conn: sqlite3.Connection) -> dict[int, str]:
-    """Map conversation_id → label (contact name for 1:1, group name for groups)."""
+    """Map conversation_id -> label (contact name for 1:1, group name for groups)."""
     cache = {}
 
-    # 1:1 conversations: use participant name
     rows = conn.execute("""
         SELECT cp.conversation_id, c.display_name, c.phone
         FROM conversation_participants cp
@@ -80,7 +79,6 @@ def _load_conversation_labels(conn: sqlite3.Connection) -> dict[int, str]:
     for conv_id, display_name, phone in rows:
         cache[conv_id] = display_name or phone or "unknown"
 
-    # Group conversations: use group name
     rows = conn.execute("""
         SELECT id, group_name FROM conversations
         WHERE is_group = 1 AND group_name IS NOT NULL AND group_name != ''
@@ -91,21 +89,19 @@ def _load_conversation_labels(conn: sqlite3.Connection) -> dict[int, str]:
     return cache
 
 
-def fetch_imessage_whatsapp(
-    conn: sqlite3.Connection, month: str,
+def _fetch_imessage_whatsapp(
+    conn: sqlite3.Connection,
     contact_cache: dict[int, str], conv_cache: dict[int, str],
 ) -> list[Message]:
-    """Fetch iMessage and WhatsApp messages for a month."""
+    """Fetch all iMessage and WhatsApp messages."""
     rows = conn.execute(
         """
         SELECT m.rowid, m.sent_at, m.source, m.is_from_me, m.contact_id, m.content,
                m.conversation_id
         FROM messages m
-        WHERE strftime('%Y-%m', m.sent_at) = ?
-          AND m.content IS NOT NULL
+        WHERE m.content IS NOT NULL
         ORDER BY m.sent_at
         """,
-        (month,),
     ).fetchall()
 
     messages = []
@@ -137,28 +133,17 @@ def fetch_imessage_whatsapp(
     return messages
 
 
-def fetch_chatgpt(conn: sqlite3.Connection, month: str) -> list[Message]:
-    """Fetch ChatGPT messages for a month."""
-    start = f"{month}-01"
-    if month.endswith("12"):
-        y = int(month[:4]) + 1
-        end = f"{y:04d}-01-01"
-    else:
-        m = int(month[5:]) + 1
-        end = f"{month[:5]}{m:02d}-01"
-
+def _fetch_chatgpt(conn: sqlite3.Connection) -> list[Message]:
+    """Fetch all ChatGPT messages."""
     rows = conn.execute(
         """
         SELECT cm.rowid, datetime(cm.create_time, 'unixepoch') as ts,
                cm.role, cm.text, cc.title
         FROM chatgpt_messages cm
         JOIN chatgpt_conversations cc ON cm.conversation_id = cc.id
-        WHERE cm.create_time >= strftime('%s', ?)
-          AND cm.create_time < strftime('%s', ?)
-          AND cm.text IS NOT NULL AND cm.text != ''
+        WHERE cm.text IS NOT NULL AND cm.text != ''
         ORDER BY cm.create_time
         """,
-        (start, end),
     ).fetchall()
 
     messages = []
@@ -176,18 +161,16 @@ def fetch_chatgpt(conn: sqlite3.Connection, month: str) -> list[Message]:
     return messages
 
 
-def fetch_gmail(conn: sqlite3.Connection, month: str) -> list[Message]:
-    """Fetch Gmail messages for a month."""
+def _fetch_gmail(conn: sqlite3.Connection) -> list[Message]:
+    """Fetch all Gmail messages."""
     rows = conn.execute(
         """
-        SELECT rowid, sent_at, is_from_me, from_name, from_addr, 
+        SELECT rowid, sent_at, is_from_me, from_name, from_addr,
                to_addrs, subject, body_text
         FROM gmail_messages
-        WHERE strftime('%Y-%m', sent_at) = ?
-          AND body_text IS NOT NULL AND body_text != ''
+        WHERE body_text IS NOT NULL AND body_text != ''
         ORDER BY sent_at
         """,
-        (month,),
     ).fetchall()
 
     messages = []
@@ -215,6 +198,25 @@ def fetch_gmail(conn: sqlite3.Connection, month: str) -> list[Message]:
     return messages
 
 
+def fetch_all_messages(db_path: str | Path | None = None) -> list[Message]:
+    """Load all messages from all sources, sorted chronologically."""
+    db = Path(db_path) if db_path else DB_PATH
+    conn = sqlite3.connect(db)
+    try:
+        contact_cache = _load_contact_cache(conn)
+        conv_cache = _load_conversation_labels(conn)
+
+        msgs: list[Message] = []
+        msgs.extend(_fetch_imessage_whatsapp(conn, contact_cache, conv_cache))
+        msgs.extend(_fetch_chatgpt(conn))
+        msgs.extend(_fetch_gmail(conn))
+    finally:
+        conn.close()
+
+    msgs.sort(key=lambda m: m.timestamp or "")
+    return msgs
+
+
 def format_message(msg: Message) -> str:
     """Format a single message for the chunk."""
     ts = msg.timestamp[:16] if msg.timestamp else "unknown"
@@ -233,103 +235,66 @@ class BatchSpec:
     """Specification for a single token-sized batch."""
     batch_num: int
     total_batches: int
-    months: list[str]
-    start_date: str
-    end_date: str
+    start_idx: int        # index into the sorted message list
+    end_idx: int          # exclusive end index
+    start_date: str       # timestamp of first message
+    end_date: str         # timestamp of last message
+    months: list[str]     # derived: calendar months spanned (for the prompt header)
     approx_tokens: int
-
-
-def _fetch_all_for_month(
-    conn: sqlite3.Connection, month: str,
-    contact_cache: dict[int, str], conv_cache: dict[int, str],
-) -> list[Message]:
-    """Fetch all messages for a month from all sources."""
-    msgs = []
-    msgs.extend(fetch_imessage_whatsapp(conn, month, contact_cache, conv_cache))
-    msgs.extend(fetch_chatgpt(conn, month))
-    msgs.extend(fetch_gmail(conn, month))
-    return msgs
 
 
 def _estimate_tokens(messages: list[Message]) -> int:
     return sum(len(format_message(m)) for m in messages) // 4
 
 
-def get_available_months(db_path: str | Path | None = None) -> list[str]:
-    """Return all months that have message data, sorted chronologically."""
-    db = Path(db_path) if db_path else DB_PATH
-    conn = sqlite3.connect(db)
-    try:
-        months = set()
-        for row in conn.execute("SELECT DISTINCT strftime('%Y-%m', sent_at) FROM messages WHERE sent_at IS NOT NULL"):
-            if row[0]:
-                months.add(row[0])
-        for row in conn.execute(
-            "SELECT DISTINCT strftime('%Y-%m', create_time, 'unixepoch') FROM chatgpt_messages WHERE create_time IS NOT NULL"
-        ):
-            if row[0]:
-                months.add(row[0])
-        for row in conn.execute(
-            "SELECT DISTINCT strftime('%Y-%m', sent_at) FROM gmail_messages WHERE sent_at IS NOT NULL"
-        ):
-            if row[0]:
-                months.add(row[0])
-        return sorted(months)
-    finally:
-        conn.close()
-
-
 def plan_batches(
-    db_path: str | Path | None = None,
+    messages: list[Message],
     max_tokens: int = MAX_BATCH_TOKENS,
 ) -> list[BatchSpec]:
-    """Plan token-sized batches across the full timeline.
+    """Plan token-sized batches by packing messages to fill each batch.
 
-    Groups consecutive months into batches that each fit within max_tokens.
-    Returns a list of BatchSpec objects describing each batch.
+    Iterates the chronologically sorted message list, cutting a new batch
+    whenever adding the next message would exceed max_tokens. Each batch
+    is packed to near-100% capacity (except the last).
     """
-    db = Path(db_path) if db_path else DB_PATH
-    months = get_available_months(db)
-    conn = sqlite3.connect(db)
-    try:
-        contact_cache = _load_contact_cache(conn)
-        conv_cache = _load_conversation_labels(conn)
-
-        month_tokens = {}
-        for m in months:
-            msgs = _fetch_all_for_month(conn, m, contact_cache, conv_cache)
-            month_tokens[m] = _estimate_tokens(msgs)
-    finally:
-        conn.close()
+    if not messages:
+        return []
 
     batches: list[BatchSpec] = []
-    current_months: list[str] = []
-    current_tokens = 0
+    batch_start = 0
+    current_chars = 0
 
-    for m in months:
-        t = month_tokens[m]
-        if current_months and current_tokens + t > max_tokens:
+    for i, msg in enumerate(messages):
+        msg_chars = len(format_message(msg))
+
+        if current_chars > 0 and (current_chars + msg_chars) // 4 > max_tokens:
+            months = sorted({m.timestamp[:7] for m in messages[batch_start:i] if m.timestamp})
             batches.append(BatchSpec(
                 batch_num=len(batches) + 1,
                 total_batches=0,
-                months=current_months,
-                start_date=f"{current_months[0]}-01",
-                end_date=_month_end(current_months[-1]),
-                approx_tokens=current_tokens,
+                start_idx=batch_start,
+                end_idx=i,
+                start_date=messages[batch_start].timestamp[:10] if messages[batch_start].timestamp else "?",
+                end_date=messages[i - 1].timestamp[:10] if messages[i - 1].timestamp else "?",
+                months=months,
+                approx_tokens=current_chars // 4,
             ))
-            current_months = []
-            current_tokens = 0
-        current_months.append(m)
-        current_tokens += t
+            batch_start = i
+            current_chars = 0
 
-    if current_months:
+        current_chars += msg_chars
+
+    if batch_start < len(messages):
+        months = sorted({m.timestamp[:7] for m in messages[batch_start:] if m.timestamp})
         batches.append(BatchSpec(
             batch_num=len(batches) + 1,
             total_batches=0,
-            months=current_months,
-            start_date=f"{current_months[0]}-01",
-            end_date=_month_end(current_months[-1]),
-            approx_tokens=current_tokens,
+            start_idx=batch_start,
+            end_idx=len(messages),
+            start_date=messages[batch_start].timestamp[:10] if messages[batch_start].timestamp else "?",
+            end_date=messages[-1].timestamp[:10] if messages[-1].timestamp else "?",
+            months=months,
+            approx_tokens=current_chars // 4,
         ))
 
     for b in batches:
@@ -338,39 +303,17 @@ def plan_batches(
     return batches
 
 
-def _month_end(month: str) -> str:
-    """Return the last day of a month string like '2024-07'."""
-    import calendar
-    y, m = int(month[:4]), int(month[5:])
-    _, last_day = calendar.monthrange(y, m)
-    return f"{month}-{last_day}"
-
-
 def build_batch_chunk(
+    messages: list[Message],
     batch: BatchSpec,
-    db_path: str | Path | None = None,
     prev_summary: str | None = None,
 ) -> str:
     """Build a complete batch chunk for extraction.
 
-    Collects all messages across the months in this batch, sorts them
-    chronologically, and formats them into a single user message.
+    Takes the full message list and a BatchSpec, slices the relevant
+    messages, and formats them into a single user message.
     """
-    db = Path(db_path) if db_path else DB_PATH
-    conn = sqlite3.connect(db)
-    try:
-        contact_cache = _load_contact_cache(conn)
-        conv_cache = _load_conversation_labels(conn)
-
-        all_messages = []
-        for month in batch.months:
-            all_messages.extend(
-                _fetch_all_for_month(conn, month, contact_cache, conv_cache)
-            )
-    finally:
-        conn.close()
-
-    all_messages.sort(key=lambda m: m.timestamp or "")
+    batch_messages = messages[batch.start_idx:batch.end_idx]
 
     chunk = BATCH_HEADER_TEMPLATE.format(
         batch_num=batch.batch_num,
@@ -387,78 +330,35 @@ def build_batch_chunk(
             prev_summary=prev_summary,
         )
 
-    chunk += f"Total messages in this batch: {len(all_messages)}\n\n---\n\n"
+    chunk += f"Total messages in this batch: {len(batch_messages)}\n\n---\n\n"
 
-    for msg in all_messages:
+    for msg in batch_messages:
         chunk += format_message(msg) + "\n\n"
 
     return chunk
 
 
-def chunk_stats(month: str, db_path: str | Path | None = None) -> dict:
-    """Get message counts and approximate token count for a month."""
-    db = Path(db_path) if db_path else DB_PATH
-    conn = sqlite3.connect(db)
-    try:
-        contact_cache = _load_contact_cache(conn)
-        conv_cache = _load_conversation_labels(conn)
-        im = fetch_imessage_whatsapp(conn, month, contact_cache, conv_cache)
-        cg = fetch_chatgpt(conn, month)
-        gm = fetch_gmail(conn, month)
-    finally:
-        conn.close()
-
-    total_chars = sum(len(m.content) for m in im + cg + gm)
-    return {
-        "month": month,
-        "imessage_whatsapp": len(im),
-        "chatgpt": len(cg),
-        "gmail": len(gm),
-        "total": len(im) + len(cg) + len(gm),
-        "total_chars": total_chars,
-        "approx_tokens": total_chars // 4,
-    }
-
-
 if __name__ == "__main__":
     import sys
 
-    if "--batches" in sys.argv:
-        batches = plan_batches()
-        print(f"Planned {len(batches)} batches:\n")
-        for b in batches:
-            m_range = f"{b.months[0]} to {b.months[-1]}" if len(b.months) > 1 else b.months[0]
-            print(
-                f"  Batch {b.batch_num:>2}/{b.total_batches}: "
-                f"{m_range:>20}  "
-                f"({len(b.months):>2} months, ~{b.approx_tokens:>9,} tokens)"
-            )
-        total = sum(b.approx_tokens for b in batches)
-        print(f"\n  Total: ~{total:,} tokens across {len(batches)} batches")
-    elif len(sys.argv) > 1:
-        months = [a for a in sys.argv[1:] if not a.startswith("-")]
-        for month in months:
-            stats = chunk_stats(month)
-            print(
-                f"  {stats['month']}: "
-                f"{stats['imessage_whatsapp']:>5} iMsg/WA  "
-                f"{stats['chatgpt']:>5} ChatGPT  "
-                f"{stats['gmail']:>3} Gmail  "
-                f"= {stats['total']:>5} total  "
-                f"(~{stats['approx_tokens']:,} tokens)"
-            )
-    else:
-        months = get_available_months()
-        print(f"Found {len(months)} months with data: {months[0]} to {months[-1]}\n")
+    db_path = None
+    if "--db" in sys.argv:
+        idx = sys.argv.index("--db")
+        db_path = sys.argv[idx + 1]
 
-        batches = plan_batches()
-        print(f"Planned {len(batches)} extraction batches at ~{MAX_BATCH_TOKENS:,} tokens each:\n")
-        for b in batches:
-            m_range = f"{b.months[0]} to {b.months[-1]}" if len(b.months) > 1 else b.months[0]
-            print(
-                f"  Batch {b.batch_num:>2}/{b.total_batches}: "
-                f"{m_range:>20}  "
-                f"({len(b.months):>2} months, ~{b.approx_tokens:>9,} tokens)"
-            )
-        total = sum(b.approx_tokens for b in batches)
-        print(f"\n  Total: ~{total:,} tokens across {len(batches)} batches")
+    print("Loading messages...", end=" ", flush=True)
+    all_messages = fetch_all_messages(db_path)
+    print(f"{len(all_messages):,} messages loaded.")
+
+    batches = plan_batches(all_messages)
+    total = sum(b.approx_tokens for b in batches)
+    print(f"Planned {len(batches)} batches at ~{MAX_BATCH_TOKENS:,} tokens each:\n")
+
+    for b in batches:
+        pct = b.approx_tokens / MAX_BATCH_TOKENS * 100
+        print(
+            f"  Batch {b.batch_num:>2}/{b.total_batches}: "
+            f"{b.start_date} to {b.end_date}  "
+            f"({len(b.months):>2} months, ~{b.approx_tokens:>9,} tokens, {pct:.0f}% full)"
+        )
+    print(f"\n  Total: ~{total:,} tokens across {len(batches)} batches")
