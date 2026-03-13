@@ -79,11 +79,43 @@
         rgba(255, 255, 255, 0.05) 40%,
         transparent 70%
       );
+      animation: glow-pulse 6s ease-in-out infinite;
+    }
+
+    .halo::before {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 500px;
+      height: 500px;
+      border-radius: 50%;
+      background: radial-gradient(
+        circle,
+        rgba(255, 255, 255, 0.04) 0%,
+        rgba(255, 255, 255, 0.02) 35%,
+        transparent 65%
+      );
+      animation: glow-drift 12s ease-in-out infinite;
     }
 
     @keyframes breathe {
       0%, 100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
-      50% { opacity: 0.7; transform: translate(-50%, -50%) scale(1.08); }
+      40% { opacity: 0.65; transform: translate(-50%, -50%) scale(1.06); }
+      60% { opacity: 0.8; transform: translate(-50%, -50%) scale(1.1); }
+      80% { opacity: 0.7; transform: translate(-50%, -50%) scale(1.04); }
+    }
+
+    @keyframes glow-pulse {
+      0%, 100% { opacity: 0.5; transform: translate(-50%, -50%) scale(1); }
+      50% { opacity: 1; transform: translate(-50%, -50%) scale(1.15); }
+    }
+
+    @keyframes glow-drift {
+      0%, 100% { filter: blur(0px); opacity: 0.35; }
+      33% { filter: blur(2px); opacity: 0.55; }
+      66% { filter: blur(1px); opacity: 0.4; }
     }
 
     .title {
@@ -190,6 +222,12 @@
     document.getElementById('download-btn').addEventListener('click', async function(e) {
       e.preventDefault();
       var label = document.getElementById('download-label');
+      var ua = navigator.userAgent || '';
+      if (/iPhone|iPad|iPod|Android|webOS|BlackBerry|IEMobile|Opera Mini/i.test(ua)) {
+        label.textContent = 'thyself requires a mac';
+        setTimeout(function() { label.textContent = 'download for mac'; }, 3000);
+        return;
+      }
       label.textContent = 'fetching latest build\u2026';
       try {
         var res = await fetch('https://api.github.com/repos/jfru/thyself/releases/latest');
