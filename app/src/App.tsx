@@ -471,7 +471,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
             setSessionSummary(full.summary);
             setIsReadOnly(true);
           }
-          if (active.kind === "portrait") {
+          {
             const status = await getSourceConnectionStatus(selectedSources);
             setConnectedSources(status.connected.filter(s => selectedSources.includes(s)));
           }

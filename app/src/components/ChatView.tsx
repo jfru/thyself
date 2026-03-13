@@ -105,6 +105,19 @@ export function ChatView({
     };
   }, []);
 
+  useEffect(() => {
+    const ACTION_MAP: Record<string, string> = {
+      build_portrait: "__OPEN_PORTRAIT__",
+    };
+    const handler = (e: Event) => {
+      const action = (e as CustomEvent).detail as string;
+      const mapped = ACTION_MAP[action];
+      if (mapped) onSend(mapped);
+    };
+    window.addEventListener("thyself-action", handler);
+    return () => window.removeEventListener("thyself-action", handler);
+  }, [onSend]);
+
   const handleConsumeDroppedImages = useCallback((imgs: ImageAttachment[]) => {
     setPendingImages([]);
     return imgs;
