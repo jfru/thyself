@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { invokeCommand } from "../lib/tauriBridge";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { Plus, MessageSquare, PanelLeftClose, PanelLeft, User, ChevronDown, ChevronRight, Trash2, Settings, Sparkles, Loader2, MessageSquareHeart, CreditCard } from "lucide-react";
 import { FeedbackModal } from "./FeedbackModal";
 import type { SessionMeta, Profile } from "../lib/types";
@@ -95,7 +96,13 @@ export function SessionSidebar({
         "cmd_create_portal_session",
         { authToken: token }
       );
-      if (result.url) window.open(result.url, "_blank");
+      if (result.url) {
+        if ((window as any).__TAURI_INTERNALS__) {
+          await openUrl(result.url);
+        } else {
+          window.open(result.url, "_blank");
+        }
+      }
     } catch (err) {
       console.error("Failed to open billing portal:", err);
     }
@@ -343,18 +350,20 @@ export function SessionSidebar({
             />
           </button>
         ) : (
-          <div className="flex w-full items-center gap-2 px-4 py-3">
-            <User size={14} className="text-zinc-500 flex-shrink-0" />
-            <span className="text-xs text-zinc-400 truncate flex-1">
-              {profile.subject_name}
-            </span>
+          <div>
+            <div className="flex w-full items-center gap-2 px-4 py-3">
+              <User size={14} className="text-zinc-500 flex-shrink-0" />
+              <span className="text-xs text-zinc-400 truncate flex-1">
+                {profile.subject_name}
+              </span>
+            </div>
             {profile.auth_token && (
               <button
                 onClick={handleManageSubscription}
-                className="flex-shrink-0 text-zinc-600 hover:text-zinc-400 transition-colors"
-                title="Manage subscription"
+                className="flex w-full items-center gap-2 px-4 py-2 pb-3 text-left text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
               >
-                <CreditCard size={12} />
+                <CreditCard size={12} className="flex-shrink-0" />
+                Manage subscription
               </button>
             )}
           </div>

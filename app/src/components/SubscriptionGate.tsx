@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { invokeCommand } from "../lib/tauriBridge";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { Loader2, ExternalLink } from "lucide-react";
 
 interface SubscriptionGateProps {
@@ -45,7 +46,11 @@ export function SubscriptionGate({ authToken, onSubscribed, onBack }: Subscripti
         { authToken }
       );
       if (result.url) {
-        window.open(result.url, "_blank");
+        if ((window as any).__TAURI_INTERNALS__) {
+          await openUrl(result.url);
+        } else {
+          window.open(result.url, "_blank");
+        }
         setCheckoutOpened(true);
       }
     } catch (err) {
