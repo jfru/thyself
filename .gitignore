@@ -13,6 +13,9 @@ gmail_client_secret.json
 
 # Tauri app
 app/node_modules/
+
+# Workers
+workers/*/node_modules/
 app/dist/
 app/src-tauri/target/
 app/src-tauri/gen/

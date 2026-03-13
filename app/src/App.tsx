@@ -3,6 +3,7 @@ import { ChatView } from "./components/ChatView";
 import { SessionSidebar } from "./components/SessionSidebar";
 import { UpdateNotification } from "./components/UpdateNotification";
 import { OnboardingWelcome } from "./components/OnboardingWelcome";
+import { SubscriptionGate } from "./components/SubscriptionGate";
 import { DataSourceGrid } from "./components/DataSourceGrid";
 import { useStreamChat } from "./hooks/useStreamChat";
 import { invokeCommand } from "./lib/tauriBridge";
@@ -11,7 +12,8 @@ import type { SessionMeta, Message, SystemMessage, Profile, ImageAttachment, Fil
 type AppPhase =
   | { kind: "loading" }
   | { kind: "onboarding-welcome" }
-  | { kind: "onboarding-sources"; name: string; apiKey: string }
+  | { kind: "subscription-gate"; name: string; email: string; authToken: string; profileId?: string }
+  | { kind: "onboarding-sources"; name: string; email: string; authToken: string }
   | { kind: "ready"; profile: Profile };
 
 function App() {
@@ -36,7 +38,29 @@ function App() {
           : result.profiles[0];
 
         if (active) {
-          setPhase({ kind: "ready", profile: active });
+          if (active.auth_token) {
+            try {
+              const sub = await invokeCommand<{ subscription_status: string }>(
+                "cmd_check_subscription",
+                { authToken: active.auth_token }
+              );
+              if (sub.subscription_status === "active") {
+                setPhase({ kind: "ready", profile: active });
+              } else {
+                setPhase({
+                  kind: "subscription-gate",
+                  name: active.name,
+                  email: active.email ?? "",
+                  authToken: active.auth_token,
+                  profileId: active.id,
+                });
+              }
+            } catch {
+              setPhase({ kind: "ready", profile: active });
+            }
+          } else {
+            setPhase({ kind: "ready", profile: active });
+          }
         } else {
           setPhase({ kind: "onboarding-welcome" });
         }
@@ -48,8 +72,20 @@ function App() {
     init();
   }, []);
 
-  function handleWelcomeNext(name: string, apiKey: string) {
-    setPhase({ kind: "onboarding-sources", name, apiKey });
+  async function handleWelcomeNext(name: string, email: string, authToken: string) {
+    try {
+      const sub = await invokeCommand<{ subscription_status: string }>(
+        "cmd_check_subscription",
+        { authToken }
+      );
+      if (sub.subscription_status === "active") {
+        setPhase({ kind: "onboarding-sources", name, email, authToken });
+      } else {
+        setPhase({ kind: "subscription-gate", name, email, authToken });
+      }
+    } catch {
+      setPhase({ kind: "subscription-gate", name, email, authToken });
+    }
   }
 
   async function handleSourcesNext(selectedSources: string[]) {
@@ -58,11 +94,17 @@ function App() {
     try {
       const profile = await invokeCommand<Profile>("cmd_create_profile", {
         name: phase.name,
-        apiKey: phase.apiKey,
         subjectName: phase.name,
-        email: null,
+        email: phase.email,
         selectedSources: selectedSources,
       });
+
+      await invokeCommand<Profile>("cmd_update_profile", {
+        profileId: profile.id,
+        authToken: phase.authToken,
+      });
+      profile.auth_token = phase.authToken;
+
       setPhase({ kind: "ready", profile });
     } catch (err) {
       console.error("Failed to create profile:", err);
@@ -99,6 +141,30 @@ function App() {
 
   if (phase.kind === "onboarding-welcome") {
     return <OnboardingWelcome onNext={handleWelcomeNext} />;
+  }
+
+  if (phase.kind === "subscription-gate") {
+    return (
+      <SubscriptionGate
+        authToken={phase.authToken}
+        onSubscribed={() => {
+          if (phase.profileId) {
+            // Returning user whose subscription renewed
+            invokeCommand<{ profiles: Profile[]; activeProfileId: string | null }>("list_profiles")
+              .then((result) => {
+                const profile = result.profiles.find((p) => p.id === phase.profileId);
+                if (profile) {
+                  setPhase({ kind: "ready", profile });
+                }
+              })
+              .catch(() => {});
+          } else {
+            setPhase({ kind: "onboarding-sources", name: phase.name, email: phase.email, authToken: phase.authToken });
+          }
+        }}
+        onBack={() => setPhase({ kind: "onboarding-welcome" })}
+      />
+    );
   }
 
   if (phase.kind === "onboarding-sources") {

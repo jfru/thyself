@@ -86,6 +86,11 @@ pub async fn start_dev_server() {
         .route("/api/start_portrait_build", post(handle_start_portrait_build))
         .route("/api/cancel_portrait_build", post(handle_cancel_portrait_build))
         .route("/api/get_portrait_status", get(handle_get_portrait_status))
+        .route("/api/cmd_send_auth_code", post(handle_send_auth_code))
+        .route("/api/cmd_verify_auth_code", post(handle_verify_auth_code))
+        .route("/api/cmd_check_subscription", post(handle_check_subscription))
+        .route("/api/cmd_create_checkout", post(handle_create_checkout))
+        .route("/api/cmd_create_portal_session", post(handle_create_portal_session))
         .layer(cors)
         .with_state(state);
 
@@ -562,7 +567,7 @@ async fn handle_create_profile(
     AxumState(state): AxumState<Arc<AppState>>,
     Json(body): Json<CreateProfileReq>,
 ) -> impl IntoResponse {
-    match profiles::create_profile(body.name, body.api_key, body.subject_name, body.email, body.selected_sources) {
+    match profiles::create_profile(body.name, Some(body.api_key), body.subject_name, body.email, body.selected_sources) {
         Ok(profile) => {
             if let Ok(new_conn) = db::open_db_for_profile(&profile.data_dir) {
                 let mut guard = state.db.conn.lock().unwrap();
@@ -659,6 +664,7 @@ async fn handle_update_profile(Json(body): Json<UpdateProfileReq>) -> impl IntoR
         body.api_key,
         body.subject_name,
         body.email,
+        None,
     ) {
         Ok(profile) => (StatusCode::OK, Json(serde_json::to_value(&profile).unwrap_or(json!({})))),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e}))),
@@ -839,6 +845,7 @@ async fn handle_remove_data_source(
         &body.profile_id,
         None,
         Some(next_sources.clone()),
+        None,
         None,
         None,
         None,
@@ -1051,6 +1058,72 @@ async fn handle_get_portrait_status(
         Ok(val) => (StatusCode::OK, Json(val)),
         Err(rusqlite::Error::QueryReturnedNoRows) => (StatusCode::OK, Json(Value::Null)),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": format!("Query failed: {}", e) }))),
+    }
+}
+
+// --- Auth / billing proxies (call the Thyself Worker API) ---
+
+#[derive(Deserialize)]
+struct SendAuthCodeReq {
+    email: String,
+}
+
+async fn handle_send_auth_code(Json(body): Json<SendAuthCodeReq>) -> impl IntoResponse {
+    match crate::commands::cmd_send_auth_code(body.email).await {
+        Ok(val) => (StatusCode::OK, Json(val)),
+        Err(e) => (StatusCode::BAD_REQUEST, Json(json!({"error": e}))),
+    }
+}
+
+#[derive(Deserialize)]
+struct VerifyAuthCodeReq {
+    email: String,
+    code: String,
+}
+
+async fn handle_verify_auth_code(Json(body): Json<VerifyAuthCodeReq>) -> impl IntoResponse {
+    match crate::commands::cmd_verify_auth_code(body.email, body.code).await {
+        Ok(val) => (StatusCode::OK, Json(val)),
+        Err(e) => (StatusCode::BAD_REQUEST, Json(json!({"error": e}))),
+    }
+}
+
+#[derive(Deserialize)]
+struct CheckSubscriptionReq {
+    #[serde(rename = "authToken")]
+    auth_token: String,
+}
+
+async fn handle_check_subscription(Json(body): Json<CheckSubscriptionReq>) -> impl IntoResponse {
+    match crate::commands::cmd_check_subscription(body.auth_token).await {
+        Ok(val) => (StatusCode::OK, Json(val)),
+        Err(e) => (StatusCode::BAD_REQUEST, Json(json!({"error": e}))),
+    }
+}
+
+#[derive(Deserialize)]
+struct CreateCheckoutReq {
+    #[serde(rename = "authToken")]
+    auth_token: String,
+}
+
+async fn handle_create_checkout(Json(body): Json<CreateCheckoutReq>) -> impl IntoResponse {
+    match crate::commands::cmd_create_checkout(body.auth_token).await {
+        Ok(val) => (StatusCode::OK, Json(val)),
+        Err(e) => (StatusCode::BAD_REQUEST, Json(json!({"error": e}))),
+    }
+}
+
+#[derive(Deserialize)]
+struct CreatePortalSessionReq {
+    #[serde(rename = "authToken")]
+    auth_token: String,
+}
+
+async fn handle_create_portal_session(Json(body): Json<CreatePortalSessionReq>) -> impl IntoResponse {
+    match crate::commands::cmd_create_portal_session(body.auth_token).await {
+        Ok(val) => (StatusCode::OK, Json(val)),
+        Err(e) => (StatusCode::BAD_REQUEST, Json(json!({"error": e}))),
     }
 }
 

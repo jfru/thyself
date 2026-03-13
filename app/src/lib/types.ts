@@ -114,11 +114,13 @@ export interface Profile {
   id: string;
   name: string;
   data_dir: string;
-  api_key: string;
+  api_key?: string;
+  auth_token?: string;
   subject_name: string;
   email: string | null;
   selected_sources: string[];
   onboarding_status: "pending" | "ingesting" | "extracting" | "complete";
+  subscription_status?: "none" | "active" | "past_due" | "cancelled";
   createdAt: string;
 }
 

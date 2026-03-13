@@ -1,0 +1,12 @@
+name = "thyself-api"
+main = "src/index.ts"
+compatibility_date = "2025-03-01"
+
+[vars]
+STRIPE_BASE_PRICE_ID = "price_1TAbUlRIXhSw0RB9551kBklm"
+STRIPE_METERED_PRICE_ID = "price_1TAbV8RIXhSw0RB9ZUX8JWzD"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "thyself-db"
+database_id = "e20138cf-d52b-401d-b9ef-6caaaf52b373"

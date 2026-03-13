@@ -8,6 +8,7 @@ pub struct Profile {
     pub id: String,
     pub name: String,
     pub data_dir: String,
+    #[serde(default)]
     pub api_key: String,
     pub subject_name: String,
     pub email: Option<String>,
@@ -15,6 +16,8 @@ pub struct Profile {
     pub onboarding_status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backup_password: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth_token: Option<String>,
     #[serde(rename = "createdAt")]
     pub created_at: String,
 }
@@ -65,7 +68,7 @@ fn set_active_profile_id(id: &str) -> Result<(), String> {
 
 pub fn create_profile(
     name: String,
-    api_key: String,
+    api_key: Option<String>,
     subject_name: String,
     email: Option<String>,
     selected_sources: Vec<String>,
@@ -90,12 +93,13 @@ pub fn create_profile(
         id: id.clone(),
         name,
         data_dir: data_dir.display().to_string(),
-        api_key,
+        api_key: api_key.unwrap_or_default(),
         subject_name,
         email,
         selected_sources,
         onboarding_status: "pending".to_string(),
         backup_password: None,
+        auth_token: None,
         created_at: chrono::Utc::now().to_rfc3339(),
     };
 
@@ -125,6 +129,7 @@ pub fn update_profile(
     api_key: Option<String>,
     subject_name: Option<String>,
     email: Option<String>,
+    auth_token: Option<String>,
 ) -> Result<Profile, String> {
     let mut profiles = read_profiles()?;
     let profile = profiles
@@ -146,6 +151,9 @@ pub fn update_profile(
     }
     if let Some(e) = email {
         profile.email = Some(e);
+    }
+    if let Some(token) = auth_token {
+        profile.auth_token = Some(token);
     }
 
     let updated = profile.clone();
@@ -248,6 +256,7 @@ pub fn migrate_legacy_data() -> Result<bool, String> {
         selected_sources: vec![],
         onboarding_status: "complete".to_string(),
         backup_password: None,
+        auth_token: None,
         created_at: chrono::Utc::now().to_rfc3339(),
     };
 
@@ -271,6 +280,22 @@ pub fn get_active_data_dir() -> PathBuf {
     } else {
         app_support_dir()
     }
+}
+
+/// Get the auth token for the active profile (for proxy-based API calls).
+pub fn get_active_auth_token() -> Option<String> {
+    if let Some(active_id) = get_active_profile_id() {
+        if let Ok(profiles) = read_profiles() {
+            if let Some(profile) = profiles.iter().find(|p| p.id == active_id) {
+                if let Some(ref token) = profile.auth_token {
+                    if !token.is_empty() {
+                        return Some(token.clone());
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Get the API key for the active profile, falling back to env.

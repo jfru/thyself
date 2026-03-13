@@ -74,27 +74,63 @@ pub fn execute_tool(
             }
 
             let pattern = sessions_dir.join("*.md");
-            let mut files: Vec<Value> = Vec::new();
+            let mut raw_files: Vec<(String, String)> = Vec::new();
 
             if let Ok(entries) = glob::glob(pattern.to_str().unwrap_or("")) {
                 for entry in entries.flatten() {
                     if let Ok(content) = fs::read_to_string(&entry) {
-                        files.push(json!({
-                            "path": entry.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
-                            "content": content
-                        }));
+                        let name = entry.file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_default();
+                        raw_files.push((name, content));
                     }
                 }
             }
 
-            files.sort_by(|a, b| {
-                a["path"]
-                    .as_str()
-                    .unwrap_or("")
-                    .cmp(b["path"].as_str().unwrap_or(""))
-            });
+            raw_files.sort_by(|a, b| a.0.cmp(&b.0));
 
-            Ok(json!({"files": files, "count": files.len()}))
+            let total = raw_files.len();
+            let recent_count = 5.min(total);
+            let older_boundary = total.saturating_sub(recent_count);
+
+            let mut timeline = String::from("SESSION TIMELINE (oldest → newest):\n");
+            for (i, (path, content)) in raw_files.iter().enumerate() {
+                let title = content.lines()
+                    .find(|l| l.starts_with("# "))
+                    .map(|l| l.trim_start_matches("# ").to_string())
+                    .unwrap_or_else(|| path.clone());
+                let marker = if i >= older_boundary { " ★" } else { "" };
+                timeline.push_str(&format!("  {}. {} — {}{}\n", i + 1, path, title, marker));
+            }
+            if total > recent_count {
+                timeline.push_str(&format!(
+                    "\n★ = recent sessions (full content below). Older sessions are condensed.\n"
+                ));
+            }
+
+            let mut files: Vec<Value> = Vec::new();
+            for (i, (path, content)) in raw_files.iter().enumerate() {
+                if i >= older_boundary {
+                    files.push(json!({
+                        "path": path,
+                        "content": content,
+                    }));
+                } else {
+                    let truncated: String = content.chars().take(600).collect();
+                    let is_truncated = content.chars().count() > 600;
+                    let display = if is_truncated {
+                        format!("{}...\n\n[Condensed — use read_file(\"sessions/{}\") for full content]", truncated, path)
+                    } else {
+                        content.clone()
+                    };
+                    files.push(json!({
+                        "path": path,
+                        "content": display,
+                    }));
+                }
+            }
+
+            Ok(json!({"timeline": timeline, "files": files, "count": total}))
         }
 
         "write_session_file" => {
@@ -240,7 +276,7 @@ pub fn get_tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "read_session_files",
-            "description": "Read previous session markdown files for context. Use this to check prior session context before making claims about previous conversations or established patterns. Call this at the start of every conversation and again mid-conversation when referencing prior sessions.",
+            "description": "Read previous session markdown files for context. Returns a chronological timeline of all sessions plus full content for the 5 most recent sessions (older sessions are condensed). Use the timeline to identify which session is most recent. Call this at the start of every conversation and again mid-conversation when referencing prior sessions.",
             "input_schema": {
                 "type": "object",
                 "properties": {},
