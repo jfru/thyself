@@ -50,8 +50,8 @@ export function InputBox({
   const [images, setImages] = useState<ImageAttachment[]>([]);
   const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
   const [isDragging, setIsDragging] = useState(false);
+  const [showAttachMenu, setShowAttachMenu] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const dragCounter = useRef(0);
 
   useEffect(() => {
@@ -59,6 +59,19 @@ export function InputBox({
       textareaRef.current.focus();
     }
   }, [isStreaming]);
+
+  useEffect(() => {
+    if (!showAttachMenu) return;
+    const close = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.closest("[data-attach-menu]")) return;
+      setShowAttachMenu(false);
+    };
+    requestAnimationFrame(() => {
+      document.addEventListener("click", close);
+    });
+    return () => document.removeEventListener("click", close);
+  }, [showAttachMenu]);
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -158,32 +171,65 @@ export function InputBox({
     e.stopPropagation();
   };
 
-  const handleDrop = (e: DragEvent) => {
+  const handleDrop = async (e: DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     dragCounter.current = 0;
     setIsDragging(false);
-    if (!isTauri() && e.dataTransfer?.files.length) {
-      addFiles(e.dataTransfer.files);
-    }
-  };
+    if (isTauri() || !e.dataTransfer?.files.length) return;
 
-  const handleAttach = useCallback(async () => {
-    if (isStreaming) return;
-    if (isTauri()) {
+    const files = Array.from(e.dataTransfer.files);
+    const paths = files
+      .map((f) => (f as File & { path?: string }).path)
+      .filter((p): p is string => !!p && p.length > 0);
+
+    if (paths.length > 0) {
       try {
         const { invokeCommand } = await import("../lib/tauriBridge");
         const result = await invokeCommand<{
           images: ImageAttachment[];
           files: Array<{ type: "file" | "folder"; path: string; name: string }>;
-        }>("pick_files");
+        }>("read_dropped_files", { paths });
         if (result.images.length) setImages((prev) => [...prev, ...result.images]);
         if (result.files.length) setFileAttachments((prev) => [...prev, ...result.files]);
       } catch (err) {
-        console.error("File picker failed:", err);
+        console.error("Drop processing failed:", err);
+        addFiles(files);
       }
     } else {
-      fileInputRef.current?.click();
+      addFiles(files);
+    }
+  };
+
+  const handleAttachFiles = useCallback(async () => {
+    if (isStreaming) return;
+    setShowAttachMenu(false);
+    try {
+      const { invokeCommand } = await import("../lib/tauriBridge");
+      const result = await invokeCommand<{
+        images: ImageAttachment[];
+        files: Array<{ type: "file" | "folder"; path: string; name: string }>;
+      }>("pick_files");
+      if (result.images.length) setImages((prev) => [...prev, ...result.images]);
+      if (result.files.length) setFileAttachments((prev) => [...prev, ...result.files]);
+    } catch (err) {
+      console.error("File picker failed:", err);
+    }
+  }, [isStreaming]);
+
+  const handleAttachFolder = useCallback(async () => {
+    if (isStreaming) return;
+    setShowAttachMenu(false);
+    try {
+      const { invokeCommand } = await import("../lib/tauriBridge");
+      const result = await invokeCommand<{
+        images: ImageAttachment[];
+        files: Array<{ type: "file" | "folder"; path: string; name: string }>;
+      }>("pick_folder");
+      if (result.images.length) setImages((prev) => [...prev, ...result.images]);
+      if (result.files.length) setFileAttachments((prev) => [...prev, ...result.files]);
+    } catch (err) {
+      console.error("Folder picker failed:", err);
     }
   }, [isStreaming]);
 
@@ -259,27 +305,34 @@ export function InputBox({
           )}
 
           <div className="flex items-center gap-2 px-3 py-3">
-            <div className="relative flex-shrink-0">
+            <div className="relative flex-shrink-0" data-attach-menu>
               <button
-                onClick={handleAttach}
+                onClick={() => setShowAttachMenu((v) => !v)}
                 disabled={isStreaming}
                 className="rounded-lg p-1.5 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 disabled:opacity-30 transition-all"
                 title="Attach file"
               >
                 <Paperclip size={18} />
               </button>
+              {showAttachMenu && (
+                <div className="absolute bottom-full left-0 mb-2 w-40 rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl overflow-hidden z-20">
+                  <button
+                    onClick={handleAttachFiles}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 transition-colors"
+                  >
+                    <FileText size={14} className="text-zinc-400" />
+                    Attach files
+                  </button>
+                  <button
+                    onClick={handleAttachFolder}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 transition-colors"
+                  >
+                    <Folder size={14} className="text-blue-400" />
+                    Attach folder
+                  </button>
+                </div>
+              )}
             </div>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/jpeg,image/png,image/gif,image/webp"
-              multiple
-              className="hidden"
-              onChange={(e) => {
-                if (e.target.files?.length) addFiles(e.target.files);
-                e.target.value = "";
-              }}
-            />
             <textarea
               ref={textareaRef}
               value={text}

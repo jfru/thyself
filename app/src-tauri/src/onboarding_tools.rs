@@ -355,6 +355,9 @@ pub async fn execute_onboarding_tool(
         "import_messages" => import_messages(tool_input).await,
         "import_chatgpt_export" => import_chatgpt_export(tool_input).await,
         "start_portrait_build" => crate::commands::start_portrait_build().await,
+        "install_weekly_sync" => install_weekly_sync(),
+        "check_sync_schedule" => check_sync_schedule(),
+        "uninstall_weekly_sync" => uninstall_weekly_sync(),
         _ => Err(format!("Unknown onboarding tool: {}", tool_name)),
     }
 }
@@ -1230,6 +1233,10 @@ async fn import_messages(tool_input: &Value) -> Result<Value, String> {
             let _ = finish_sync_run(&db_path, id, messages_added, last_message_at.clone(), None);
         }
 
+        if method == "initial_sync" {
+            ensure_sync_installed();
+        }
+
         Ok(json!({
             "status": "ok",
             "output": stdout,
@@ -1380,6 +1387,8 @@ async fn import_chatgpt_export(tool_input: &Value) -> Result<Value, String> {
             let _ = finish_sync_run(&db_path, id, messages_added, last_message_at.clone(), None);
         }
 
+        ensure_sync_installed();
+
         Ok(json!({
             "status": "ok",
             "output": stdout,
@@ -1395,6 +1404,209 @@ async fn import_chatgpt_export(tool_input: &Value) -> Result<Value, String> {
             "ChatGPT import failed:\nstdout: {}\nstderr: {}",
             stdout, stderr
         ))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Weekly sync schedule (launchd)
+// ---------------------------------------------------------------------------
+
+const PLIST_LABEL: &str = "com.thyself.weekly-sync";
+const PLIST_NAME: &str = "com.thyself.weekly-sync.plist";
+
+fn launch_agents_dir() -> PathBuf {
+    home_dir().join("Library/LaunchAgents")
+}
+
+fn installed_plist_path() -> PathBuf {
+    launch_agents_dir().join(PLIST_NAME)
+}
+
+fn generate_sync_plist(project_root: &std::path::Path) -> String {
+    let sync_script = project_root.join("sync/run_sync.sh");
+    let log_dir = home_dir()
+        .join("Library/Application Support/Thyself/logs");
+
+    let mut path_parts = Vec::new();
+    let pyenv_shims = home_dir().join(".pyenv/shims");
+    if pyenv_shims.exists() {
+        path_parts.push(pyenv_shims.display().to_string());
+    }
+    path_parts.extend([
+        "/usr/local/bin".to_string(),
+        "/usr/bin".to_string(),
+        "/bin".to_string(),
+    ]);
+    let path_str = path_parts.join(":");
+
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{label}</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>{script}</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>{log_dir}/sync-stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>{log_dir}/sync-stderr.log</string>
+
+    <key>WorkingDirectory</key>
+    <string>{project_root}</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>{path}</string>
+    </dict>
+</dict>
+</plist>
+"#,
+        label = PLIST_LABEL,
+        script = sync_script.display(),
+        log_dir = log_dir.display(),
+        project_root = project_root.display(),
+        path = path_str,
+    )
+}
+
+fn do_install_weekly_sync() -> Result<Value, String> {
+    let project_root = find_project_root()
+        .ok_or("Could not find project root (config.py not found)")?;
+
+    let sync_script = project_root.join("sync/run_sync.sh");
+    if !sync_script.exists() {
+        return Err(format!("Sync script not found: {}", sync_script.display()));
+    }
+
+    // Ensure run_sync.sh is executable
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = std::fs::metadata(&sync_script) {
+            let mut perms = meta.permissions();
+            perms.set_mode(0o755);
+            let _ = std::fs::set_permissions(&sync_script, perms);
+        }
+    }
+
+    let agents_dir = launch_agents_dir();
+    std::fs::create_dir_all(&agents_dir)
+        .map_err(|e| format!("Failed to create LaunchAgents dir: {}", e))?;
+
+    let log_dir = home_dir()
+        .join("Library/Application Support/Thyself/logs");
+    std::fs::create_dir_all(&log_dir)
+        .map_err(|e| format!("Failed to create log dir: {}", e))?;
+
+    let plist_content = generate_sync_plist(&project_root);
+    let plist_path = installed_plist_path();
+
+    // Unload existing job (ignore errors if not loaded)
+    let _ = std::process::Command::new("launchctl")
+        .args(["unload", &plist_path.display().to_string()])
+        .output();
+
+    std::fs::write(&plist_path, &plist_content)
+        .map_err(|e| format!("Failed to write plist: {}", e))?;
+
+    let load_result = std::process::Command::new("launchctl")
+        .args(["load", &plist_path.display().to_string()])
+        .output()
+        .map_err(|e| format!("Failed to run launchctl load: {}", e))?;
+
+    if !load_result.status.success() {
+        let stderr = String::from_utf8_lossy(&load_result.stderr);
+        return Err(format!("launchctl load failed: {}", stderr));
+    }
+
+    Ok(json!({
+        "status": "installed",
+        "schedule": "Every Sunday at 3:00 AM",
+        "plist_path": plist_path.display().to_string(),
+        "sync_script": sync_script.display().to_string(),
+    }))
+}
+
+fn install_weekly_sync() -> Result<Value, String> {
+    do_install_weekly_sync()
+}
+
+fn check_sync_schedule() -> Result<Value, String> {
+    let plist_path = installed_plist_path();
+
+    let result = std::process::Command::new("launchctl")
+        .args(["list", PLIST_LABEL])
+        .output()
+        .map_err(|e| format!("Failed to run launchctl: {}", e))?;
+
+    if result.status.success() {
+        Ok(json!({
+            "status": "installed",
+            "loaded": true,
+            "schedule": "Every Sunday at 3:00 AM",
+            "plist_path": plist_path.display().to_string(),
+        }))
+    } else if plist_path.exists() {
+        Ok(json!({
+            "status": "installed",
+            "loaded": false,
+            "message": "Plist exists but is not loaded. May need to be reloaded.",
+            "plist_path": plist_path.display().to_string(),
+        }))
+    } else {
+        Ok(json!({
+            "status": "not_installed",
+            "message": "Weekly sync is not configured.",
+        }))
+    }
+}
+
+fn uninstall_weekly_sync() -> Result<Value, String> {
+    let plist_path = installed_plist_path();
+
+    if plist_path.exists() {
+        let _ = std::process::Command::new("launchctl")
+            .args(["unload", &plist_path.display().to_string()])
+            .output();
+
+        std::fs::remove_file(&plist_path)
+            .map_err(|e| format!("Failed to remove plist: {}", e))?;
+
+        Ok(json!({
+            "status": "uninstalled",
+        }))
+    } else {
+        Ok(json!({
+            "status": "not_installed",
+            "message": "Weekly sync was not configured.",
+        }))
+    }
+}
+
+/// Best-effort install of the weekly sync schedule. Called automatically
+/// after a successful initial import so new users get recurring sync
+/// without needing to run a separate command.
+fn ensure_sync_installed() {
+    match do_install_weekly_sync() {
+        Ok(_) => eprintln!("[sync] Weekly sync schedule installed"),
+        Err(e) => eprintln!("[sync] Could not install weekly sync schedule: {}", e),
     }
 }
 
@@ -1617,6 +1829,33 @@ pub fn get_onboarding_tool_definitions() -> Vec<Value> {
         json!({
             "name": "start_portrait_build",
             "description": "Start building the user's life portrait from their connected data. Runs extraction and synthesis in the background. Only call this after presenting data stats and cost/time estimates and getting the user's explicit confirmation to proceed.",
+            "input_schema": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }),
+        json!({
+            "name": "install_weekly_sync",
+            "description": "Install the automated weekly sync schedule. Sets up a macOS launchd job that runs every Sunday at 3 AM to sync all connected data sources. This is installed automatically after the first successful import, but you can call it explicitly to reinstall or verify. Returns the schedule details and file paths.",
+            "input_schema": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }),
+        json!({
+            "name": "check_sync_schedule",
+            "description": "Check whether the automated weekly sync is installed and running. Returns status: 'installed' (with loaded=true/false) or 'not_installed'.",
+            "input_schema": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }),
+        json!({
+            "name": "uninstall_weekly_sync",
+            "description": "Remove the automated weekly sync schedule. Unloads and deletes the launchd job. Only call this if the user explicitly asks to disable automatic syncing.",
             "input_schema": {
                 "type": "object",
                 "properties": {},

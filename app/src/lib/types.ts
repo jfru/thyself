@@ -73,6 +73,7 @@ export interface AssistantMessage {
 export interface SystemMessage {
   role: "system";
   text: string;
+  subtitle?: string;
   action?: {
     label: string;
     message: string;

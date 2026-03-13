@@ -141,18 +141,21 @@ Never commit `.env` or any files from your application support directory.
 
 ## Sync + Data Pipelines (Advanced / Internal)
 
+The weekly sync is **installed automatically** when a user completes their first data source import during onboarding. It runs every Sunday at 3 AM via macOS launchd, syncing only the active profile's connected sources.
+
 These scripts still power the data layer and can be run independently:
 
 ```bash
-# Weekly sync orchestrator
+# Weekly sync orchestrator (profile-aware)
 python sync/run.py
 
 # Run one source only
 python sync/run.py --source gmail
 
-# Install scheduled weekly sync (launchd)
-python sync/install.py install
-python sync/install.py status
+# Manage the scheduled weekly sync (launchd)
+python sync/install.py install   # Generate plist and load
+python sync/install.py status    # Check if installed
+python sync/install.py uninstall # Remove
 ```
 
 Other commonly used scripts:

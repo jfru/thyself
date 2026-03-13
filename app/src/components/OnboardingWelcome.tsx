@@ -78,7 +78,14 @@ export function OnboardingWelcome({ onNext }: OnboardingWelcomeProps) {
             </label>
             <p className="text-xs text-zinc-500">
               Get one at{" "}
-              <span className="text-blue-400">console.anthropic.com</span>
+              <a
+                href="https://console.anthropic.com/settings/keys"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-400 hover:text-blue-300 underline transition-colors"
+              >
+                console.anthropic.com
+              </a>
             </p>
             <div className="relative">
               <input
