@@ -94,12 +94,13 @@ pub fn run() {
                 }
             }
             // #endregion
-            #[cfg(debug_assertions)]
-            {
-                use tauri::Manager;
-                if let Some(win) = app.get_webview_window("main") {
+            use tauri::Manager;
+            if let Some(win) = app.get_webview_window("main") {
+                #[cfg(debug_assertions)]
+                {
                     let _ = win.set_title("Thyself DEV");
                 }
+                let _ = win.set_focus();
             }
             Ok(())
         })
