@@ -12,12 +12,32 @@ interface FeedbackRequest {
 }
 
 const REPO = "jfru/thyself";
+const RATE_LIMIT_MAX = 5;
+const RATE_LIMIT_WINDOW_SECONDS = 3600;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type",
 };
+
+async function checkRateLimit(
+  ip: string,
+  kv: KVNamespace
+): Promise<boolean> {
+  const key = `ratelimit:${ip}`;
+  const current = await kv.get(key);
+  const count = current ? parseInt(current, 10) : 0;
+
+  if (count >= RATE_LIMIT_MAX) {
+    return false;
+  }
+
+  await kv.put(key, String(count + 1), {
+    expirationTtl: RATE_LIMIT_WINDOW_SECONDS,
+  });
+  return true;
+}
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -29,6 +49,15 @@ export default {
       return Response.json(
         { success: false, error: "Method not allowed" },
         { status: 405, headers: corsHeaders }
+      );
+    }
+
+    const clientIp = request.headers.get("CF-Connecting-IP") || "unknown";
+    const allowed = await checkRateLimit(clientIp, env.FEEDBACK_CONTACTS);
+    if (!allowed) {
+      return Response.json(
+        { success: false, error: "Rate limit exceeded. Please try again later." },
+        { status: 429, headers: corsHeaders }
       );
     }
 

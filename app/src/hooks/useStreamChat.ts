@@ -523,10 +523,6 @@ export function useStreamChat(opts: StreamChatOptions = {}) {
           });
         }
 
-        // #region agent log
-        fetch('http://127.0.0.1:7709/ingest/d9149a58-da3e-4f10-b872-bd18ccc36ca6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'2ee486'},body:JSON.stringify({sessionId:'2ee486',location:'useStreamChat.ts:278',message:'system prompt selected',data:{isOnboarding: shouldUseOnboardingPrompt, onboardingStatus, selectedSources, activeSessionKind: effectiveSessionKind, promptStart: systemPrompt.substring(0, 80)},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
-
         ctx.unlisten = await streamChat(
           {
             messages: apiMessages,

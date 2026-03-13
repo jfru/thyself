@@ -32,17 +32,6 @@ pub fn kill_syncs_for_sources(sources: &[&str]) {
 const APPLE_EPOCH_OFFSET: i64 = 978_307_200;
 const NANOSECONDS: i64 = 1_000_000_000;
 
-// #region agent log
-const DEBUG_LOG_PATH: &str = "/Users/jfru/thyself/.cursor/debug-2ee486.log";
-fn debug_log(location: &str, message: &str, data: &str, hypothesis: &str) {
-    use std::io::Write;
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(DEBUG_LOG_PATH) {
-        let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis();
-        let _ = writeln!(f, r#"{{"sessionId":"2ee486","location":"{}","message":"{}","data":{},"hypothesisId":"{}","timestamp":{}}}"#, location, message, data, hypothesis, ts);
-    }
-}
-// #endregion
-
 fn home_dir() -> PathBuf {
     dirs::home_dir().unwrap_or_default()
 }
@@ -70,41 +59,17 @@ fn open_readonly(path: &std::path::Path) -> Result<rusqlite::Connection, String>
     let _ = std::fs::remove_file(tmp_copy.with_extension("sqlite-shm"));
     let _ = std::fs::remove_file(&tmp_copy);
 
-    // #region agent log
-    debug_log("onboarding_tools.rs:open_readonly", "open_readonly called", &format!(r#"{{"path":"{}","exists":{}}}"#, path.display(), path.exists()), "H4");
-    // #endregion
-
-    // Strategy 1: Direct copy (works if app has FDA)
-    match std::fs::copy(path, &tmp_copy) {
-        Ok(bytes) => {
-            // #region agent log
-            debug_log("onboarding_tools.rs:strategy1", "direct copy SUCCESS", &format!(r#"{{"bytes":{}}}"#, bytes), "H2");
-            // #endregion
-            return open_sqlite_conn(&tmp_copy);
-        }
-        Err(e) => {
-            // #region agent log
-            debug_log("onboarding_tools.rs:strategy1", "direct copy FAILED", &format!(r#"{{"error":"{}","kind":"{:?}"}}"#, e, e.kind()), "H2");
-            // #endregion
-        }
+    if std::fs::copy(path, &tmp_copy).is_ok() {
+        return open_sqlite_conn(&tmp_copy);
     }
 
-    // Strategy 2 (dev mode): shell cp inherits terminal FDA
-    let dev_mode = is_dev_mode();
-    // #region agent log
-    let exe_path = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default();
-    debug_log("onboarding_tools.rs:strategy2", "dev mode check", &format!(r#"{{"is_dev_mode":{},"exe_path":"{}"}}"#, dev_mode, exe_path), "H3");
-    // #endregion
-    if dev_mode {
+    if is_dev_mode() {
         let ok = std::process::Command::new("cp")
             .arg(path.as_os_str())
             .arg(tmp_copy.as_os_str())
             .status()
             .map(|s| s.success())
             .unwrap_or(false);
-        // #region agent log
-        debug_log("onboarding_tools.rs:strategy2", "shell cp result", &format!(r#"{{"success":{}}}"#, ok), "H3");
-        // #endregion
         if ok {
             return open_sqlite_conn(&tmp_copy);
         }
@@ -367,11 +332,7 @@ pub async fn execute_onboarding_tool(
 // ---------------------------------------------------------------------------
 
 fn scan_message_sources() -> Result<Value, String> {
-    // #region agent log
     let home = home_dir();
-    debug_log("onboarding_tools.rs:scan", "scan_message_sources called", &format!(r#"{{"home_dir":"{}"}}"#, home.display()), "H4,H5");
-    // #endregion
-
     let mut results = json!({});
 
     // === iMessage ===
@@ -390,10 +351,6 @@ fn scan_message_sources() -> Result<Value, String> {
         "WhatsApp Desktop",
         |conn| query_source_stats_whatsapp(conn),
     );
-
-    // #region agent log
-    debug_log("onboarding_tools.rs:scan", "scan results", &format!(r#"{{"imessage_status":"{}","whatsapp_status":"{}"}}"#, results["imessage"]["status"].as_str().unwrap_or("?"), results["whatsapp_desktop"]["status"].as_str().unwrap_or("?")), "H1,H2,H3,H4");
-    // #endregion
 
     Ok(results)
 }

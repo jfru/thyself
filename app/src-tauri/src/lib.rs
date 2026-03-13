@@ -84,16 +84,6 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .manage(db_state)
         .setup(|app| {
-            // #region agent log
-            {
-                use std::io::Write;
-                let path = "/Users/jfru/thyself/.cursor/debug-2ee486.log";
-                let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis();
-                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-                    let _ = writeln!(f, r#"{{"sessionId":"2ee486","location":"lib.rs:setup","message":"tauri setup called","data":{{}},"timestamp":{}}}"#, ts);
-                }
-            }
-            // #endregion
             use tauri::Manager;
             if let Some(win) = app.get_webview_window("main") {
                 #[cfg(debug_assertions)]

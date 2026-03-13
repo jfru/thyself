@@ -8,12 +8,6 @@ import { useStreamChat } from "./hooks/useStreamChat";
 import { invokeCommand } from "./lib/tauriBridge";
 import type { SessionMeta, Message, SystemMessage, Profile, ImageAttachment, FileAttachment } from "./lib/types";
 
-// #region agent log
-function dlog(location: string, message: string, data: Record<string, unknown>) {
-  invokeCommand("cmd_debug_log", { location, message, data: JSON.stringify(data) }).catch(() => {});
-}
-// #endregion
-
 type AppPhase =
   | { kind: "loading" }
   | { kind: "onboarding-welcome" }
@@ -30,10 +24,6 @@ function App() {
           profiles: Profile[];
           activeProfileId: string | null;
         }>("list_profiles");
-
-        // #region agent log
-        dlog('App.tsx:init', 'profiles loaded', {count:result.profiles.length,activeId:result.activeProfileId,activeOnboarding:result.profiles.find(p=>p.id===result.activeProfileId)?.onboarding_status});
-        // #endregion
 
         if (result.profiles.length === 0) {
           setPhase({ kind: "onboarding-welcome" });
@@ -376,9 +366,6 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
 
   useEffect(() => {
     async function resumeActiveSession() {
-      // #region agent log
-      dlog('App.tsx:resume', 'effect entered', {onboardingStatus:profile.onboarding_status,onboardingStarted:onboardingStarted.current,profileId:profile.id});
-      // #endregion
       try {
         if (profile.onboarding_status === "pending") {
           const hasData = await hasImportedData();
@@ -477,9 +464,6 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
           }
         }
       } catch (err) {
-        // #region agent log
-        dlog('App.tsx:resume', 'ERROR', {error:String(err)});
-        // #endregion
         console.error("Failed to resume active session:", err);
       }
     }
@@ -493,13 +477,8 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
           sessionId,
           messages: msgs,
         });
-        // #region agent log
-        dlog('App.tsx:save', 'save SUCCESS', {sessionId,msgCount:msgs.length});
-        // #endregion
       } catch (err) {
-        // #region agent log
-        dlog('App.tsx:save', 'save FAILED', {sessionId,error:String(err)});
-        // #endregion
+        console.error("Failed to save session messages:", err);
       }
     },
     []
@@ -775,9 +754,6 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
       if (curr.has(id)) continue;
 
       const msgs = getSessionMessages(id);
-      // #region agent log
-      dlog('App.tsx:save-trigger', 'save triggered', {sessionId: id, messageCount: msgs.length});
-      // #endregion
       void saveCurrentMessages(id, msgs);
 
       fetchPortraitStatus();

@@ -900,24 +900,19 @@ async fn handle_validate_api_key(Json(body): Json<ValidateApiKeyReq>) -> impl In
     }
 }
 
-// #region agent log
 #[derive(serde::Deserialize)]
 struct DebugLogReq {
+    #[allow(dead_code)]
     location: String,
+    #[allow(dead_code)]
     message: String,
+    #[allow(dead_code)]
     data: String,
 }
 
-async fn handle_debug_log(Json(body): Json<DebugLogReq>) -> impl IntoResponse {
-    use std::io::Write;
-    let path = "/Users/jfru/thyself/.cursor/debug-2ee486.log";
-    let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis();
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-        let _ = writeln!(f, r#"{{"sessionId":"2ee486","location":"{}","message":"{}","data":{},"timestamp":{}}}"#, body.location, body.message, body.data, ts);
-    }
+async fn handle_debug_log(Json(_body): Json<DebugLogReq>) -> impl IntoResponse {
     StatusCode::OK
 }
-// #endregion
 
 async fn handle_open_icloud_settings() -> impl IntoResponse {
     crate::onboarding_tools::perform_open_icloud_settings();

@@ -52,21 +52,6 @@ pub fn create_session(name: Option<&str>, kind: Option<&str>) -> Result<SessionM
     let mut manifest = read_manifest()?;
     let session_kind = kind.unwrap_or("conversation");
 
-    // #region agent log
-    {
-        use std::io::Write;
-        let path = "/Users/jfru/thyself/.cursor/debug-2ee486.log";
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-            let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis();
-            let active_count = manifest.iter().filter(|s| s.status == "active").count();
-            let history_len = manifest.iter().find(|s| s.status == "active").map(|s| {
-                if let serde_json::Value::Array(arr) = &s.chat_history { arr.len() } else { 0 }
-            }).unwrap_or(0);
-            let _ = writeln!(f, r#"{{"sessionId":"2ee486","location":"sessions.rs:create_session","message":"called","data":{{"manifest_len":{},"active_count":{},"active_history_len":{}}},"timestamp":{}}}"#, manifest.len(), active_count, history_len, ts);
-        }
-    }
-    // #endregion
-
     if let Some(idx) = manifest
         .iter()
         .position(|s| s.status == "active" && s.kind == session_kind)

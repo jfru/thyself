@@ -45,16 +45,6 @@ pub async fn write_db(
 
 #[tauri::command]
 pub async fn list_profiles() -> Result<Value, String> {
-    // #region agent log
-    {
-        use std::io::Write;
-        let path = "/Users/jfru/thyself/.cursor/debug-2ee486.log";
-        let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis();
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-            let _ = writeln!(f, r#"{{"sessionId":"2ee486","location":"commands.rs:list_profiles","message":"called","data":{{}},"timestamp":{}}}"#, ts);
-        }
-    }
-    // #endregion
     let profiles = profiles::read_profiles()?;
     let active_id = profiles::get_active_profile_id();
     Ok(json!({
@@ -1238,15 +1228,7 @@ pub async fn get_portrait_status(state: State<'_, DbState>) -> Result<Value, Str
     }
 }
 
-// #region agent log
 #[tauri::command]
-pub async fn cmd_debug_log(location: String, message: String, data: String) -> Result<(), String> {
-    use std::io::Write;
-    let path = "/Users/jfru/thyself/.cursor/debug-2ee486.log";
-    let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis();
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-        let _ = writeln!(f, r#"{{"sessionId":"2ee486","location":"{}","message":"{}","data":{},"timestamp":{}}}"#, location, message, data, ts);
-    }
+pub async fn cmd_debug_log(_location: String, _message: String, _data: String) -> Result<(), String> {
     Ok(())
 }
-// #endregion
