@@ -15,7 +15,6 @@ export function OnboardingWelcome({ onNext }: OnboardingWelcomeProps) {
   const [code, setCode] = useState(["", "", "", "", "", ""]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [authToken, setAuthToken] = useState<string | null>(null);
   const codeRefs = useRef<(HTMLInputElement | null)[]>([]);
 
   useEffect(() => {
@@ -48,7 +47,6 @@ export function OnboardingWelcome({ onNext }: OnboardingWelcomeProps) {
         "cmd_verify_auth_code",
         { email: email.trim().toLowerCase(), code: fullCode }
       );
-      setAuthToken(result.token);
       setStep("verified");
       setTimeout(() => {
         onNext(name.trim(), email.trim().toLowerCase(), result.token);
