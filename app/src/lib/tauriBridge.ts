@@ -1,4 +1,27 @@
-const DEV_SERVER = "http://localhost:3001";
+const LOCAL_SERVER = "http://localhost:3001";
+
+const CHAT_SERVERS = {
+  dev: LOCAL_SERVER,
+  prod: "https://thyself-api.jfru.workers.dev",
+} as const;
+
+export type ServerEnv = keyof typeof CHAT_SERVERS;
+
+let currentEnv: ServerEnv =
+  (localStorage.getItem("thyself-server-env") as ServerEnv) || "dev";
+
+export function getServerEnv(): ServerEnv {
+  return currentEnv;
+}
+
+export function setServerEnv(env: ServerEnv): void {
+  currentEnv = env;
+  localStorage.setItem("thyself-server-env", env);
+}
+
+function getChatServerUrl(): string {
+  return CHAT_SERVERS[currentEnv];
+}
 
 function isTauri(): boolean {
   return typeof window !== "undefined" && !!(window as any).__TAURI_INTERNALS__;
@@ -37,7 +60,7 @@ export async function invokeCommand<T = unknown>(
     opts.body = JSON.stringify(args || {});
   }
 
-  const res = await fetch(`${DEV_SERVER}/api/${endpoint}`, opts);
+  const res = await fetch(`${LOCAL_SERVER}/api/${endpoint}`, opts);
   if (!res.ok) {
     const err = await res.text();
     throw new Error(err);
@@ -110,7 +133,7 @@ export async function streamChat(
 
   (async () => {
     try {
-      const res = await fetch(`${DEV_SERVER}/api/stream_chat`, {
+      const res = await fetch(`${getChatServerUrl()}/api/stream_chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(args),
@@ -184,7 +207,7 @@ export async function stopChat(streamId: string): Promise<void> {
   }
 
   try {
-    await fetch(`${DEV_SERVER}/api/stop_chat`, {
+    await fetch(`${getChatServerUrl()}/api/stop_chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ streamId }),
