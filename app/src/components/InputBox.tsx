@@ -21,6 +21,7 @@ interface InputBoxProps {
   pendingDroppedFiles?: FileAttachment[];
   onConsumeDroppedFiles?: (files: FileAttachment[]) => FileAttachment[];
   isTauriDragging?: boolean;
+  placeholder?: string;
 }
 
 function fileToAttachment(file: File): Promise<ImageAttachment | null> {
@@ -147,6 +148,7 @@ export function InputBox({
   pendingDroppedFiles,
   onConsumeDroppedFiles,
   isTauriDragging,
+  placeholder = "What's on your mind?",
 }: InputBoxProps) {
   const [images, setImages] = useState<ImageAttachment[]>([]);
   const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
@@ -546,7 +548,7 @@ export function InputBox({
             <div className="relative flex-1">
               {showPlaceholder && (
                 <div className="absolute inset-0 text-zinc-500 text-sm leading-relaxed pointer-events-none select-none">
-                  Message thyself...
+                  {placeholder}
                 </div>
               )}
               <div
@@ -558,7 +560,7 @@ export function InputBox({
                 onFocus={() => updateEditorState()}
                 onBlur={() => updateEditorState()}
                 role="textbox"
-                aria-placeholder="Message thyself..."
+                aria-placeholder={placeholder}
                 className="min-h-[1.5em] max-h-[200px] overflow-y-auto resize-none bg-transparent text-zinc-100 outline-none text-sm leading-relaxed whitespace-pre-wrap break-words [&_[data-mention-type]]:inline-flex [&_[data-mention-type]]:items-center [&_[data-mention-type]]:gap-1 [&_[data-mention-type]]:rounded [&_[data-mention-type]]:bg-blue-500/20 [&_[data-mention-type]]:text-blue-300 [&_[data-mention-type]]:px-1.5 [&_[data-mention-type]]:py-0.5 [&_[data-mention-type]]:text-xs [&_[data-mention-type]]:font-medium [&_[data-mention-type]]:mx-0.5 [&_[data-mention-type]]:align-baseline [&_[data-mention-type]]:cursor-default [&_[data-mention-type]]:whitespace-nowrap"
               />
             </div>
