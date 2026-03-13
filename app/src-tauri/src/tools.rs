@@ -93,22 +93,29 @@ pub fn execute_tool(
             let recent_count = 5.min(total);
             let older_boundary = total.saturating_sub(recent_count);
 
-            let mut timeline = String::from("SESSION TIMELINE (oldest → newest):\n");
+            let mut timeline = String::from("SESSION TIMELINE (oldest → most recent):\n");
             for (i, (path, content)) in raw_files.iter().enumerate() {
                 let title = content.lines()
                     .find(|l| l.starts_with("# "))
                     .map(|l| l.trim_start_matches("# ").to_string())
                     .unwrap_or_else(|| path.clone());
-                let marker = if i >= older_boundary { " ★" } else { "" };
+                let marker = if i >= older_boundary { " ★ RECENT" } else { "" };
                 timeline.push_str(&format!("  {}. {} — {}{}\n", i + 1, path, title, marker));
             }
+            timeline.push_str(&format!(
+                "\nMOST RECENT SESSION: {}\n",
+                raw_files.last().map(|(p, _)| p.as_str()).unwrap_or("none")
+            ));
             if total > recent_count {
-                timeline.push_str(&format!(
-                    "\n★ = recent sessions (full content below). Older sessions are condensed.\n"
-                ));
+                timeline.push_str("★ RECENT = full content below. Older sessions are condensed.\n");
             }
 
             let mut files: Vec<Value> = Vec::new();
+            files.push(json!({
+                "path": "_INDEX",
+                "content": timeline,
+            }));
+
             for (i, (path, content)) in raw_files.iter().enumerate() {
                 if i >= older_boundary {
                     files.push(json!({
@@ -130,7 +137,7 @@ pub fn execute_tool(
                 }
             }
 
-            Ok(json!({"timeline": timeline, "files": files, "count": total}))
+            Ok(json!({"count": total, "files": files}))
         }
 
         "write_session_file" => {
