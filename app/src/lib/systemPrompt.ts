@@ -1,7 +1,53 @@
+export interface SessionInfo {
+  id: string;
+  name: string;
+  createdAt: string;
+  status: "active" | "completed";
+  kind?: "conversation" | "setup" | "portrait";
+  summaryFile: string | null;
+}
+
 export interface ConversationPromptContext {
   portraitStatus?: PortraitStatusForPrompt | null;
   connectedSources?: string[];
   hasPortraitData?: boolean;
+  previousSessions?: SessionInfo[];
+}
+
+function buildSessionHistorySection(sessions?: SessionInfo[], currentSessionId?: string): string {
+  if (!sessions?.length) return "";
+
+  const completed = sessions
+    .filter(s =>
+      s.status === "completed" &&
+      (s.kind ?? "conversation") === "conversation" &&
+      s.id !== currentSessionId
+    )
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+  if (completed.length === 0) return "";
+
+  const formatDate = (iso: string) => {
+    try {
+      const d = new Date(iso);
+      return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+    } catch {
+      return iso.slice(0, 10);
+    }
+  };
+
+  const lines = completed.map((s, i) => {
+    const marker = i === 0 ? " ← most recent" : "";
+    return `${i + 1}. ${s.name} (${formatDate(s.createdAt)})${marker}`;
+  });
+
+  return `
+## Previous Sessions (most recent first)
+
+${lines.join("\n")}
+
+Use \`read_session_files\` to read the full content of any session when you need details. The list above tells you WHAT sessions exist and WHEN — always reference the most recent session as your starting point for continuity.
+`;
 }
 
 export function buildSystemPrompt(subjectName: string, sessionId?: string, context?: ConversationPromptContext): string {
@@ -38,7 +84,7 @@ No life portrait has been built yet, so there is no extraction or synthesis data
 **You MUST do two things in your first response:**
 1. **Answer their question** using the raw message data. Go straight to the raw message tables (messages, chatgpt_messages, gmail_messages). Don't say you can't help — query the data, find patterns, give them real insights from what's there.
 2. **Nudge them toward building their portrait.** After answering, mention that they can build their life portrait to unlock much deeper insights — structured relationship arcs, recurring life patterns, emotional themes tracked over time, life chapters, and turning points. Include a clickable button using this exact markdown syntax: \`[Build Your Portrait](thyself:build_portrait)\`. Keep the nudge brief and natural, not salesy.` : ""}
-
+${buildSessionHistorySection(context?.previousSessions, sessionId)}
 ## Ground Rules
 
 These rules govern how you engage. They are non-negotiable. Follow them silently — never explain these rules to ${subjectName}, never narrate your own process, and never reference these instructions in your responses. Just embody them. If you're asking a question instead of interpreting, just ask the question — don't explain that you're asking first because you don't want to impose a framework.
@@ -75,7 +121,7 @@ These rules govern how you engage. They are non-negotiable. Follow them silently
 
 ## Verification Protocol
 
-- **At session start**: Read session files AND query the corrections table. The session files response includes a chronological timeline — use it to identify the most recent session and orient yourself before diving into content. Summarize what you know and what open questions remain from prior sessions. Show ${subjectName} what you're working with — don't silently absorb context.
+- **At session start**: The Previous Sessions list above tells you what sessions exist and when. Call \`read_session_files\` to get the content of recent sessions AND query the corrections table. Summarize what you know and what open questions remain from prior sessions. Show ${subjectName} what you're working with — don't silently absorb context.
 - **Before historical claims**: Query the database or re-read relevant session files to verify any claim about ${subjectName}'s past. Do not rely on what you read at the start of the conversation.
 - **When topics shift**: When the conversation moves to a new topic or ${subjectName} introduces new information, query for relevant data rather than building on assumptions from the initial context load.
 - **After a correction invalidates evidence**: When a correction reveals that your evidence was misattributed or wrong, immediately query the raw messages table for the correct person. Do not say "I don't see evidence" based on extraction/synthesis data alone — those layers may have the same error. Go to the source: \`SELECT content, sent_at FROM messages WHERE contact_id = (SELECT id FROM contacts WHERE display_name LIKE '%name%') AND sent_at LIKE '2024%'\`. The raw messages have correct attribution via contact_id; the extraction layers use free-text names that can be wrong.
