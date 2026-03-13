@@ -170,13 +170,34 @@
     <p class="title">know</p>
     <h1 class="brand">Thyself</h1>
     <p class="subtitle">an AI that actually knows you<br>so that you can know yourself</p>
-    <a href="https://github.com/jfru/thyself/releases/latest" class="download">
+    <a href="#" id="download-btn" class="download">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
         <path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2Z"/>
         <path d="M12 8v8m0 0l-3-3m3 3l3-3"/>
       </svg>
-      download for mac
+      <span id="download-label">download for mac</span>
     </a>
   </div>
+  <script>
+    document.getElementById('download-btn').addEventListener('click', async function(e) {
+      e.preventDefault();
+      var label = document.getElementById('download-label');
+      label.textContent = 'fetching latest build\u2026';
+      try {
+        var res = await fetch('https://api.github.com/repos/jfru/thyself/releases/latest');
+        if (!res.ok) throw new Error(res.status);
+        var release = await res.json();
+        var dmg = release.assets.find(function(a) { return a.name.endsWith('.dmg'); });
+        if (dmg) {
+          window.location.href = dmg.browser_download_url;
+          label.textContent = 'downloading\u2026';
+        } else {
+          window.location.href = 'https://github.com/jfru/thyself/releases/latest';
+        }
+      } catch (_) {
+        window.location.href = 'https://github.com/jfru/thyself/releases/latest';
+      }
+    });
+  </script>
 </body>
 </html>
