@@ -351,21 +351,21 @@ export function SessionSidebar({
           </button>
         ) : (
           <div>
+            {profile.auth_token && (
+              <button
+                onClick={handleManageSubscription}
+                className="flex w-full items-center gap-2 px-4 pt-3 py-2 text-left text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+              >
+                <CreditCard size={12} className="flex-shrink-0" />
+                Manage subscription
+              </button>
+            )}
             <div className="flex w-full items-center gap-2 px-4 py-3">
               <User size={14} className="text-zinc-500 flex-shrink-0" />
               <span className="text-xs text-zinc-400 truncate flex-1">
                 {profile.subject_name}
               </span>
             </div>
-            {profile.auth_token && (
-              <button
-                onClick={handleManageSubscription}
-                className="flex w-full items-center gap-2 px-4 py-2 pb-3 text-left text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
-              >
-                <CreditCard size={12} className="flex-shrink-0" />
-                Manage subscription
-              </button>
-            )}
           </div>
         )}
 
