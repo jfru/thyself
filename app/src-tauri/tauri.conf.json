@@ -39,7 +39,7 @@
     "createUpdaterArtifacts": true,
     "macOS": {
       "entitlements": "entitlements.plist",
-      "signingIdentity": "-"
+      "signingIdentity": "Developer ID Application: Clip Media Inc (PJWC9KVM7B)"
     }
   },
   "plugins": {
