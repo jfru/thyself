@@ -230,16 +230,17 @@ export function SessionSidebar({
               return (
                 <>
                   {visible.map((session) => {
-                    const isActive = session.id === activeSessionId;
+                    const isSelected = session.id === activeSessionId;
+                    const isCurrent = session.status === "active";
                     const isThisStreaming = streamingSessionIds.has(session.id);
                     return (
                       <button
                         key={session.id}
                         onClick={() => onLoadSession(session.id)}
-                        className={`flex w-full items-start gap-2 px-4 py-2.5 text-left transition-colors ${
-                          isActive
-                            ? "bg-zinc-800/60 border-l-2 border-blue-500"
-                            : "hover:bg-zinc-900 border-l-2 border-transparent"
+                        className={`flex w-full items-start gap-2 px-4 py-2.5 text-left transition-colors border-l-2 ${
+                          isSelected
+                            ? "bg-zinc-800/60 border-blue-500"
+                            : "border-transparent hover:bg-zinc-900 hover:border-zinc-600"
                         }`}
                       >
                         {isThisStreaming ? (
@@ -251,13 +252,13 @@ export function SessionSidebar({
                           <MessageSquare
                             size={14}
                             className={`mt-0.5 flex-shrink-0 ${
-                              isActive ? "text-blue-400" : "text-zinc-600"
+                              isCurrent ? "text-blue-400" : "text-zinc-600"
                             }`}
                           />
                         )}
                         <div className="min-w-0">
                           <div className={`text-xs truncate ${
-                            isActive ? "text-zinc-200 font-medium" : "text-zinc-400"
+                            isSelected ? "text-zinc-200 font-medium" : "text-zinc-400"
                           }`}>
                             {session.name}
                           </div>
@@ -312,10 +313,10 @@ export function SessionSidebar({
                 <button
                   key={session.id}
                   onClick={() => onLoadSession(session.id)}
-                  className={`flex w-full items-start gap-2 px-4 py-2.5 text-left transition-colors ${
+                  className={`flex w-full items-start gap-2 px-4 py-2.5 text-left transition-colors border-l-2 ${
                     isActive
-                      ? "bg-zinc-800/60 border-l-2 border-blue-500"
-                      : "hover:bg-zinc-900 border-l-2 border-transparent"
+                      ? "bg-zinc-800/60 border-blue-500"
+                      : "border-transparent hover:bg-zinc-900 hover:border-zinc-600"
                   }`}
                 >
                   {isBusy ? (
