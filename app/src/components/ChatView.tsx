@@ -7,14 +7,14 @@ import { SetupSourcesStatusPanel } from "./SetupSourcesStatusPanel";
 import { PortraitBuildPanel } from "./PortraitBuildPanel";
 import type { PortraitRunStatus } from "./PortraitBuildPanel";
 import { useAutoScroll } from "../hooks/useAutoScroll";
-import type { Message, ImageAttachment, FileAttachment } from "../lib/types";
+import type { Message, ImageAttachment, FileAttachment, ContextAttachment } from "../lib/types";
 import { isTauri, invokeCommand } from "../lib/tauriBridge";
 import { ArrowDown, Trash2 } from "lucide-react";
 
 interface ChatViewProps {
   messages: Message[];
   isStreaming: boolean;
-  onSend: (text: string, images?: ImageAttachment[], options?: { selectedSourcesOverride?: string[] }, files?: FileAttachment[]) => void;
+  onSend: (text: string, images?: ImageAttachment[], options?: { selectedSourcesOverride?: string[]; context?: ContextAttachment[] }, files?: FileAttachment[]) => void;
   onStop: () => void;
   onClear?: () => void;
   sessionSummary?: string | null;
