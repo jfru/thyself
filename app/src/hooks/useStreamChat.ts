@@ -128,7 +128,7 @@ export function useStreamChat(sessionIdRef: React.RefObject<string | null>, opts
 
   const sendMessage = useCallback(
     async (userText: string, images?: ImageAttachment[], options?: SendMessageOptions, files?: FileAttachment[]) => {
-      if (isStreaming) return;
+      if (isStreaming && streamingSessionId === sessionIdRef.current) return;
 
       const userMsg: UserMessage = {
         role: "user",

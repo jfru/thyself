@@ -164,7 +164,7 @@ export function ChatView({
           onRemoveSource={onRemoveSource}
         />
       )}
-      {(activeSessionKind === "portrait" || (portraitStatus && portraitStatus.status === "running")) && (
+      {activeSessionKind === "portrait" && (
         <PortraitBuildPanel
           portraitStatus={portraitStatus ?? null}
           onRefresh={onPortraitRefresh ?? (() => {})}

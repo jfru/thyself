@@ -946,6 +946,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
           onNewSession={handleNewSession}
           onLoadSession={handleLoadSession}
           activeSessionId={activeSessionId}
+          streamingSessionId={isStreaming ? streamingSessionId : null}
           collapsed={sidebarCollapsed}
           onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
           refreshKey={sidebarRefreshKey}
