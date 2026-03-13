@@ -119,6 +119,7 @@ export function useStreamChat(sessionIdRef: React.RefObject<string | null>, opts
   const { subjectName, onboardingStatus, selectedSources, connectedSources, activeSessionKind, portraitStatus } = opts;
   const [messages, setMessages] = useState<Message[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [streamingSessionId, setStreamingSessionId] = useState<string | null>(null);
   const unlistenRef = useRef<(() => void) | null>(null);
   const streamIdRef = useRef<string | null>(null);
   const blocksRef = useRef<ContentBlock[]>([]);
@@ -146,6 +147,7 @@ export function useStreamChat(sessionIdRef: React.RefObject<string | null>, opts
 
       setMessages((prev) => [...prev, userMsg, assistantMsg]);
       setIsStreaming(true);
+      setStreamingSessionId(sessionIdRef.current);
       blocksRef.current = [];
       toolInputBuffers.current.clear();
       indexMapRef.current.clear();
@@ -350,6 +352,7 @@ export function useStreamChat(sessionIdRef: React.RefObject<string | null>, opts
               return updated;
             });
             setIsStreaming(false);
+            setStreamingSessionId(null);
             if (unlistenRef.current) {
               unlistenRef.current();
               unlistenRef.current = null;
@@ -448,6 +451,7 @@ export function useStreamChat(sessionIdRef: React.RefObject<string | null>, opts
           },
         ]);
         setIsStreaming(false);
+        setStreamingSessionId(null);
       }
     },
     [messages, isStreaming, onboardingStatus, selectedSources, connectedSources, subjectName, activeSessionKind]
@@ -491,6 +495,7 @@ export function useStreamChat(sessionIdRef: React.RefObject<string | null>, opts
     });
 
     setIsStreaming(false);
+    setStreamingSessionId(null);
     streamIdRef.current = null;
   }, [isStreaming]);
 
@@ -498,5 +503,5 @@ export function useStreamChat(sessionIdRef: React.RefObject<string | null>, opts
     setMessages([]);
   }, []);
 
-  return { messages, isStreaming, sendMessage, stopStreaming, clearMessages, setMessages };
+  return { messages, isStreaming, streamingSessionId, sendMessage, stopStreaming, clearMessages, setMessages };
 }

@@ -5,12 +5,17 @@ Weekly sync orchestrator for thyself.
 Runs each data source sync in sequence, logs results to the sync_runs table,
 and handles errors gracefully so one failed source doesn't block the others.
 
+Profile-aware: reads the active profile's data_dir and selected_sources from
+the Thyself profile system. Falls back to config.py / env vars if no profile
+system is configured.
+
 Usage:
-    python sync/run.py              # Run all sources
+    python sync/run.py              # Run all sources for the active profile
     python sync/run.py --source gmail   # Run one source
 """
 
 import argparse
+import json
 import logging
 import sqlite3
 import sys
@@ -19,9 +24,54 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from config import DB_PATH, DATA_DIR
 
-LOG_DIR = DATA_DIR / "logs"
+# Profile source keys → sync module keys
+PROFILE_SOURCE_TO_SYNC = {
+    "imessage": ["imessage"],
+    "whatsapp": ["whatsapp_desktop"],
+    "gmail": ["gmail"],
+}
+
+
+def get_active_profile() -> tuple[Path | None, list[str] | None]:
+    """Read the active profile from the Thyself profile system.
+
+    Returns (data_dir, selected_sources) or (None, None) if no profile
+    system is configured.
+    """
+    app_support = Path.home() / "Library" / "Application Support" / "Thyself"
+    active_file = app_support / "active_profile"
+    profiles_file = app_support / "profiles.json"
+
+    if not active_file.exists() or not profiles_file.exists():
+        return None, None
+
+    try:
+        active_id = active_file.read_text().strip()
+        profiles = json.loads(profiles_file.read_text())
+        for profile in profiles:
+            if profile["id"] == active_id:
+                return Path(profile["data_dir"]), profile.get("selected_sources", [])
+    except (json.JSONDecodeError, KeyError, OSError):
+        pass
+
+    return None, None
+
+
+def resolve_paths() -> tuple[Path, Path]:
+    """Return (db_path, log_dir) using the profile system with config.py fallback."""
+    profile_data_dir, _ = get_active_profile()
+    if profile_data_dir:
+        db_path = profile_data_dir / "thyself.db"
+        log_dir = profile_data_dir / "logs"
+    else:
+        from config import DB_PATH as _db, DATA_DIR as _data
+        db_path = _db
+        log_dir = _data / "logs"
+    return db_path, log_dir
+
+
+DEFAULT_DB_PATH, LOG_DIR = resolve_paths()
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
@@ -131,11 +181,29 @@ def run_source_sync(source_key, db_path):
 
 
 def run_all(db_path=None, sources=None):
-    """Run sync for all (or specified) sources."""
-    db_path = db_path or DB_PATH
+    """Run sync for all (or specified) sources.
+
+    When sources is None, uses the active profile's selected_sources to
+    determine which sync modules to run. Falls back to all sources if
+    no profile is configured.
+    """
+    db_path = db_path or DEFAULT_DB_PATH
     ensure_sync_runs_table(db_path)
 
-    source_keys = sources or list(SOURCES.keys())
+    if sources is None:
+        _, profile_sources = get_active_profile()
+        if profile_sources:
+            source_keys = []
+            for ps in profile_sources:
+                source_keys.extend(PROFILE_SOURCE_TO_SYNC.get(ps, []))
+            if not source_keys:
+                log.info("Active profile has no syncable sources configured")
+                return {}
+        else:
+            source_keys = list(SOURCES.keys())
+    else:
+        source_keys = sources
+
     log.info(f"Starting weekly sync for: {', '.join(source_keys)}")
     log.info(f"Database: {db_path}")
 

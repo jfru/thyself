@@ -2,8 +2,11 @@
 """
 Install or uninstall the thyself weekly sync launchd job.
 
+Generates the plist dynamically based on the current installation paths
+so it works on any machine without hardcoded user paths.
+
 Usage:
-    python sync/install.py install    # Install and load the plist
+    python sync/install.py install    # Generate plist, install, and load
     python sync/install.py uninstall  # Unload and remove the plist
     python sync/install.py status     # Check if installed and running
 """
@@ -17,22 +20,72 @@ from pathlib import Path
 
 PLIST_NAME = "com.thyself.weekly-sync.plist"
 LAUNCH_AGENTS_DIR = Path.home() / "Library" / "LaunchAgents"
-SOURCE_PLIST = Path(__file__).resolve().parent.parent / PLIST_NAME
 INSTALLED_PLIST = LAUNCH_AGENTS_DIR / PLIST_NAME
-SYNC_SCRIPT = Path(__file__).resolve().parent / "run_sync.sh"
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+SYNC_SCRIPT = PROJECT_ROOT / "sync" / "run_sync.sh"
+LOG_DIR = Path.home() / "Library" / "Application Support" / "Thyself" / "logs"
+
+
+def generate_plist() -> str:
+    """Generate the launchd plist XML with paths for the current installation."""
+    path_parts = []
+    pyenv_shims = Path.home() / ".pyenv" / "shims"
+    if pyenv_shims.exists():
+        path_parts.append(str(pyenv_shims))
+    path_parts.extend(["/usr/local/bin", "/usr/bin", "/bin"])
+    path_str = ":".join(path_parts)
+
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.thyself.weekly-sync</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>{SYNC_SCRIPT}</string>
+    </array>
+
+    <!-- Run every Sunday at 3:00 AM -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>{LOG_DIR}/sync-stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>{LOG_DIR}/sync-stderr.log</string>
+
+    <key>WorkingDirectory</key>
+    <string>{PROJECT_ROOT}</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>{path_str}</string>
+    </dict>
+</dict>
+</plist>
+"""
 
 
 def install():
-    if not SOURCE_PLIST.exists():
-        print(f"Error: plist not found at {SOURCE_PLIST}")
-        sys.exit(1)
-
     LAUNCH_AGENTS_DIR.mkdir(parents=True, exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
 
     os.chmod(SYNC_SCRIPT, 0o755)
 
-    shutil.copy2(SOURCE_PLIST, INSTALLED_PLIST)
-    print(f"Copied plist to {INSTALLED_PLIST}")
+    plist_content = generate_plist()
+    INSTALLED_PLIST.write_text(plist_content)
+    print(f"Generated and wrote plist to {INSTALLED_PLIST}")
 
     subprocess.run(
         ["launchctl", "unload", str(INSTALLED_PLIST)],
@@ -49,6 +102,8 @@ def install():
 
     print("Installed and loaded com.thyself.weekly-sync")
     print("Sync will run every Sunday at 3:00 AM")
+    print(f"  Script: {SYNC_SCRIPT}")
+    print(f"  Logs:   {LOG_DIR}/sync-*.log")
 
 
 def uninstall():

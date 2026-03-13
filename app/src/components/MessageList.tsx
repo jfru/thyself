@@ -26,7 +26,10 @@ function SystemMessageBubble({
   return (
     <div className="flex justify-center py-6">
       <div className="bg-zinc-900/80 border border-zinc-800 rounded-xl px-5 py-4 max-w-sm text-center">
-        <p className="text-sm text-zinc-300">{message.text}</p>
+        <p className="text-sm text-zinc-300 text-balance">{message.text}</p>
+        {message.subtitle && (
+          <p className="mt-2 text-xs text-zinc-500 leading-relaxed text-balance">{message.subtitle}</p>
+        )}
         {hasActions && (
           <div className="mt-3 flex flex-col items-center gap-2">
             {message.action && (

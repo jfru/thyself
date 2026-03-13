@@ -311,29 +311,31 @@ ${subjectName} currently has these selected data sources: ${sourceList}
 ## Your Tools
 
 You have onboarding tools. Use them at every step to verify progress:
-
-- **scan_message_sources** — Scan for iMessage and WhatsApp databases on this Mac. Call this first, and re-call after permission changes.
+${hasiMessage || hasWhatsApp ? `
+- **scan_message_sources** — Scan for iMessage and WhatsApp databases on this Mac. Only use when iMessage or WhatsApp is selected.
 - **open_full_disk_access** — Opens System Settings directly to the Full Disk Access page. Use when scan returns "permission_denied".
+- **restart_app** — Shows a restart button in the chat. Only use as a LAST RESORT if re-scanning after FDA grant still fails.` : ''}
+${hasiMessage ? `
 - **open_icloud_settings** — Shows a clickable "Open iCloud Settings" button in the chat. The user clicks it when ready to open System Settings. Always explain all the instructions BEFORE calling this tool. Do NOT say "I've opened settings" — you haven't; the button lets the user open it themselves.
+- **monitor_imessage_download** — Poll chat.db to track iCloud Messages download progress. Returns status: downloading/complete/no_change.` : ''}
+${hasWhatsApp ? `
 - **open_finder_iphone** — Shows a clickable "Open Finder" button in the chat. The user clicks it to open Finder where they can select their iPhone. Always explain the backup instructions BEFORE calling this tool. Do NOT say "I've opened Finder" — the button lets the user open it themselves.
-- **restart_app** — Shows a restart button in the chat. Only use as a LAST RESORT if re-scanning after FDA grant still fails.
-- **monitor_imessage_download** — Poll chat.db to track iCloud Messages download progress. Returns status: downloading/complete/no_change.
 - **generate_backup_password** — Generate and save a backup encryption password. Returns it for the user to copy-paste.
 - **check_iphone_connection** — Check if an iPhone is connected via USB.
 - **find_iphone_backups** — List available iPhone backups with dates and encryption status.
 - **monitor_iphone_backup** — Poll backup directory to track backup progress. Returns status: in_progress/complete/not_started.
-- **extract_from_backup** — Extract WhatsApp databases from an encrypted iPhone backup.
+- **extract_from_backup** — Extract WhatsApp databases from an encrypted iPhone backup.` : ''}
+${hasGmail ? `
 - **check_gmail_auth** — Check Gmail authentication status. Returns status and whether gcloud is available.
 - **authenticate_gmail** — Open browser for Google sign-in (when client credentials exist).
 - **setup_gmail_auto** — Automatically set up Gmail via gcloud CLI (when gcloud is installed).
 - **find_downloaded_gmail_credential** — Find client_secret*.json in ~/Downloads and install it automatically.
-- **open_gmail_setup_url** — Open a specific Google Cloud Console URL in the user's browser.
-- **import_messages** — Import messages into Thyself. Use method="initial_sync" for first-time setup (imports ALL messages). Use method="local_sync" for later incremental syncs. Use method="backup_import" for WhatsApp iPhone backup.
+- **open_gmail_setup_url** — Open a specific Google Cloud Console URL in the user's browser.` : ''}
+- **import_messages** — Import messages into Thyself. Use method="initial_sync" for first-time setup (imports ALL messages). Use method="local_sync" for later incremental syncs.${hasWhatsApp ? ' Use method="backup_import" for WhatsApp iPhone backup.' : ''}
+${hasiMessage || hasWhatsApp ? `
+## Step 1: Scan and Ensure Permissions
 
-## Step 1: Scan and Ensure Permissions (iMessage/WhatsApp only)
-
-If iMessage or WhatsApp is selected, call \`scan_message_sources\` immediately. **Before presenting any results**, check the status of each source.
-If neither iMessage nor WhatsApp is selected, skip this step entirely.
+Call \`scan_message_sources\` immediately. **Before presenting any results**, check the status of each source.
 
 ### If the user says they restarted or granted permissions:
 Call \`scan_message_sources\` immediately — do NOT explain what you're doing first, just scan.
@@ -355,14 +357,14 @@ In dev mode, the terminal app or IDE running \`tauri dev\` needs Full Disk Acces
 ### If all sources have status "found":
 Present the results naturally:
 - "I found X messages in Y conversations on your Mac, going back to [earliest date]"
-- Report each source separately (iMessage and/or WhatsApp Desktop)
+- Report each source separately
 
-## Step 2: Assess Completeness (iMessage/WhatsApp only)
+## Step 2: Assess Completeness
 
-For each selected source that was scanned locally (iMessage/WhatsApp), ask:
+For each selected source that was scanned locally, ask:
 - "Is [earliest date] around when you started using [app]? Or do you have older messages that haven't synced to this Mac?"
 
-Their answer determines which path to take for each source.`;
+Their answer determines which path to take for each source.` : ''}`;
 
   if (hasiMessage) {
     prompt += `

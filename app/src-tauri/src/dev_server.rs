@@ -81,6 +81,8 @@ pub async fn start_dev_server() {
         .route("/api/cmd_open_finder_iphone", post(handle_open_finder_iphone))
         .route("/api/import_chatgpt_export", post(handle_import_chatgpt_export))
         .route("/api/read_dropped_files", post(handle_read_dropped_files))
+        .route("/api/pick_files", post(handle_pick_files))
+        .route("/api/pick_folder", post(handle_pick_folder))
         .route("/api/start_portrait_build", post(handle_start_portrait_build))
         .route("/api/cancel_portrait_build", post(handle_cancel_portrait_build))
         .route("/api/get_portrait_status", get(handle_get_portrait_status))
@@ -954,6 +956,26 @@ async fn handle_read_dropped_files(
     Json(body): Json<ReadDroppedFilesReq>,
 ) -> impl IntoResponse {
     match crate::commands::read_dropped_files(body.paths).await {
+        Ok(result) => (StatusCode::OK, Json(result)),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e })),
+        ),
+    }
+}
+
+async fn handle_pick_files() -> impl IntoResponse {
+    match crate::commands::pick_files().await {
+        Ok(result) => (StatusCode::OK, Json(result)),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e })),
+        ),
+    }
+}
+
+async fn handle_pick_folder() -> impl IntoResponse {
+    match crate::commands::pick_folder().await {
         Ok(result) => (StatusCode::OK, Json(result)),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,

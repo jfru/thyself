@@ -32,6 +32,7 @@ export function SessionSidebar({
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [allProfiles, setAllProfiles] = useState<Profile[]>([]);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [confirmFinalDelete, setConfirmFinalDelete] = useState<{ id: string; name: string } | null>(null);
   const [conversationsOpen, setConversationsOpen] = useState(true);
   const [conversationsShowAll, setConversationsShowAll] = useState(false);
   const [gettingStartedOpen, setGettingStartedOpen] = useState(true);
@@ -300,7 +301,7 @@ export function SessionSidebar({
                       onClick={() => {
                         setConfirmDeleteId(null);
                         setShowProfileMenu(false);
-                        onDeleteProfile(p.id);
+                        setConfirmFinalDelete({ id: p.id, name: p.subject_name });
                       }}
                       className="px-2 py-0.5 text-[10px] font-medium rounded bg-red-600 text-white hover:bg-red-500 transition-colors"
                     >
@@ -352,6 +353,34 @@ export function SessionSidebar({
           </div>
         )}
       </div>
+
+      {confirmFinalDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-xl px-6 py-5 max-w-sm w-full mx-4 text-center shadow-2xl">
+            <p className="text-sm text-zinc-200 font-medium">Are you sure?</p>
+            <p className="mt-2 text-xs text-zinc-400 leading-relaxed text-balance">
+              This will permanently delete all of your data from this computer.
+            </p>
+            <div className="mt-4 flex items-center justify-center gap-3">
+              <button
+                onClick={() => {
+                  onDeleteProfile(confirmFinalDelete.id);
+                  setConfirmFinalDelete(null);
+                }}
+                className="px-4 py-2 text-sm font-medium rounded-lg bg-red-600 text-white hover:bg-red-500 transition-colors"
+              >
+                Delete everything
+              </button>
+              <button
+                onClick={() => setConfirmFinalDelete(null)}
+                className="px-4 py-2 text-sm font-medium rounded-lg border border-zinc-700 bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
