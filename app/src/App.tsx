@@ -394,6 +394,9 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
         "load_session", { sessionId }
       );
       if (result.session.status === "completed") {
+        sessionMetaCacheRef.current.set(sessionId, {
+          readOnly: true, summary: result.summary, name: result.session.name,
+        });
         setSessionSummary(result.summary);
         setSessionName(result.session.name);
         setIsReadOnly(true);
@@ -1039,6 +1042,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
   }, [clearMessages, activeSessionId, activeSessionKind, profile.onboarding_status, selectedSources, saveCurrentMessages, setMessages]);
 
   const loadRequestRef = useRef(0);
+  const sessionMetaCacheRef = useRef<Map<string, { readOnly: boolean; summary: string | null; name: string }>>(new Map());
 
   const handleLoadSession = useCallback(
     async (sessionId: string) => {
@@ -1046,6 +1050,16 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
       const isStale = () => loadRequestRef.current !== requestId;
 
       wrapUpLastShownAtRef.current = 0;
+
+      const cachedMeta = sessionMetaCacheRef.current.get(sessionId);
+      if (cachedMeta) {
+        setIsReadOnly(cachedMeta.readOnly);
+        setSessionSummary(cachedMeta.summary);
+        setSessionName(cachedMeta.name);
+      } else {
+        setIsReadOnly(false);
+        setSessionSummary(null);
+      }
       try {
         // If this session is streaming in the background, switch to its
         // cached state which has the latest in-flight messages.
@@ -1058,15 +1072,12 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
           }>("load_session", { sessionId });
           if (isStale()) return;
           const { session, summary } = result;
+          const ro = session.status === "completed";
+          sessionMetaCacheRef.current.set(sessionId, { readOnly: ro, summary, name: session.name });
           setActiveSessionKind((session.kind ?? "conversation") as "conversation" | "setup" | "portrait");
           setSessionName(session.name);
-          if (session.status === "completed") {
-            setSessionSummary(summary);
-            setIsReadOnly(true);
-          } else {
-            setSessionSummary(null);
-            setIsReadOnly(false);
-          }
+          setSessionSummary(summary);
+          setIsReadOnly(ro);
           return;
         }
 
@@ -1082,15 +1093,12 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
           }>("load_session", { sessionId });
           if (isStale()) return;
           const { session, summary } = result;
+          const ro = session.status === "completed";
+          sessionMetaCacheRef.current.set(sessionId, { readOnly: ro, summary, name: session.name });
           setActiveSessionKind((session.kind ?? "conversation") as "conversation" | "setup" | "portrait");
           setSessionName(session.name);
-          if (session.status === "completed") {
-            setSessionSummary(summary);
-            setIsReadOnly(true);
-          } else {
-            setSessionSummary(null);
-            setIsReadOnly(false);
-          }
+          setSessionSummary(summary);
+          setIsReadOnly(ro);
           return;
         }
 
@@ -1143,13 +1151,10 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
           switchToSession(session.id, []);
         }
 
-        if (session.status === "completed") {
-          setSessionSummary(summary);
-          setIsReadOnly(true);
-        } else {
-          setSessionSummary(null);
-          setIsReadOnly(false);
-        }
+        const ro = session.status === "completed";
+        sessionMetaCacheRef.current.set(sessionId, { readOnly: ro, summary, name: session.name });
+        setSessionSummary(summary);
+        setIsReadOnly(ro);
       } catch (err) {
         console.error("Failed to load session:", err);
       }
