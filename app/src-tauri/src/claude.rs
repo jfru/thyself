@@ -200,3 +200,123 @@ pub async fn stream_chat_request(
     full_response["content"] = Value::Array(content_blocks);
     Ok(full_response)
 }
+
+/// Non-streaming Claude call to generate a session summary from chat history.
+/// Returns (title, summary_markdown).
+pub async fn summarize_conversation(
+    auth_token: &str,
+    chat_messages: &[Value],
+) -> Result<(String, String), String> {
+    let mut transcript = String::new();
+    for msg in chat_messages {
+        let role = msg["role"].as_str().unwrap_or("unknown");
+        match role {
+            "user" => {
+                let text = msg.get("content")
+                    .and_then(|c| c.as_str())
+                    .or_else(|| msg.get("text").and_then(|t| t.as_str()))
+                    .unwrap_or("");
+                if !text.is_empty() {
+                    transcript.push_str(&format!("**User:** {}\n\n", text));
+                }
+            }
+            "assistant" => {
+                if let Some(blocks) = msg.get("blocks").and_then(|b| b.as_array()) {
+                    for block in blocks {
+                        if block["type"].as_str() == Some("text") {
+                            let text = block.get("text")
+                                .and_then(|t| t.as_str())
+                                .unwrap_or("");
+                            if !text.is_empty() {
+                                transcript.push_str(&format!("**Assistant:** {}\n\n", text));
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if transcript.trim().is_empty() {
+        return Err("No conversation content to summarize".to_string());
+    }
+
+    let truncated = if transcript.len() > 40000 {
+        format!("{}...\n[truncated]", &transcript[..40000])
+    } else {
+        transcript
+    };
+
+    let system = "You generate session summaries for a personal AI therapy/coaching app. Given a conversation transcript, produce a JSON object with exactly two fields: \"title\" (a short descriptive title, 3-8 words, like \"Exploring relationship patterns with Dad\" or \"Breakthrough with mum over Candela\") and \"summary\" (a markdown summary covering: key insights and themes explored, any corrections or reframings, open questions, and suggested next steps). Do NOT include the conversation transcript in the summary. Respond with ONLY the JSON object, no other text.";
+
+    let messages = vec![json!({
+        "role": "user",
+        "content": format!("Summarize this session:\n\n{}", truncated)
+    })];
+
+    let client = Client::new();
+    let model = std::env::var("THYSELF_CHAT_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string());
+
+    let body = json!({
+        "model": model,
+        "max_tokens": 2048,
+        "system": system,
+        "messages": messages,
+    });
+
+    let is_direct = auth_token.starts_with("sk-ant-");
+    let (url, auth_header_name, auth_header_value) = if is_direct {
+        (DIRECT_API_URL, "x-api-key", auth_token.to_string())
+    } else {
+        (PROXY_API_URL, "Authorization", format!("Bearer {}", auth_token))
+    };
+
+    let response = client
+        .post(url)
+        .header(auth_header_name, &auth_header_value)
+        .header("anthropic-version", "2023-06-01")
+        .header("content-type", "application/json")
+        .body(serde_json::to_string(&body).unwrap())
+        .send()
+        .await
+        .map_err(|e| format!("Summary request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let err_body = response.text().await.unwrap_or_default();
+        return Err(format!("Summary API error {}: {}", status, err_body));
+    }
+
+    let resp_body: Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse summary response: {}", e))?;
+
+    let text = resp_body["content"]
+        .as_array()
+        .and_then(|blocks| {
+            blocks.iter().find_map(|b| {
+                if b["type"].as_str() == Some("text") {
+                    b["text"].as_str().map(|s| s.to_string())
+                } else {
+                    None
+                }
+            })
+        })
+        .ok_or_else(|| "No text in summary response".to_string())?;
+
+    let parsed: Value = serde_json::from_str(text.trim().trim_start_matches("```json").trim_end_matches("```").trim())
+        .map_err(|e| format!("Failed to parse summary JSON: {} — raw: {}", e, text))?;
+
+    let title = parsed["title"]
+        .as_str()
+        .unwrap_or("Untitled Session")
+        .to_string();
+    let summary = parsed["summary"]
+        .as_str()
+        .unwrap_or("No summary generated.")
+        .to_string();
+
+    Ok((title, summary))
+}

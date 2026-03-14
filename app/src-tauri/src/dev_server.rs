@@ -63,6 +63,7 @@ pub async fn start_dev_server() {
         .route("/api/list_sessions", get(handle_list_sessions))
         .route("/api/load_session", post(handle_load_session))
         .route("/api/save_session_messages", post(handle_save_session_messages))
+        .route("/api/close_and_summarize_session", post(handle_close_and_summarize_session))
         .route("/api/data_dir", get(handle_data_dir))
         .route("/api/tool_defs", get(handle_tool_defs))
         .route("/api/sync_status", get(handle_sync_status))
@@ -423,6 +424,20 @@ async fn handle_save_session_messages(
 ) -> impl IntoResponse {
     match sessions::save_messages(&body.session_id, &body.messages) {
         Ok(_) => (StatusCode::OK, Json(json!({"status": "ok"}))),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e}))),
+    }
+}
+
+#[derive(Deserialize)]
+struct CloseSessionReq {
+    session_id: String,
+}
+
+async fn handle_close_and_summarize_session(
+    Json(body): Json<CloseSessionReq>,
+) -> impl IntoResponse {
+    match crate::commands::close_and_summarize_session(body.session_id).await {
+        Ok(val) => (StatusCode::OK, Json(val)),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e}))),
     }
 }

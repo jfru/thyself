@@ -522,6 +522,73 @@ pub async fn save_session_messages(session_id: String, messages: Value) -> Resul
     Ok(json!({"status": "ok"}))
 }
 
+/// Immediately marks a session as completed with a placeholder title,
+/// then generates a summary in the background via a Claude API call.
+/// Returns immediately so the frontend can switch to a new session.
+#[tauri::command]
+pub async fn close_and_summarize_session(session_id: String) -> Result<Value, String> {
+    let manifest = sessions::read_manifest()?;
+    let session = manifest
+        .iter()
+        .find(|s| s.id == session_id)
+        .ok_or_else(|| format!("Session not found: {}", session_id))?;
+
+    if session.status != "active" {
+        return Ok(json!({"status": "already_closed"}));
+    }
+
+    let chat_history = session.chat_history.clone();
+    let has_messages = chat_history
+        .as_array()
+        .map(|a| a.iter().any(|m| m["role"].as_str() == Some("user")))
+        .unwrap_or(false);
+
+    if !has_messages {
+        return Ok(json!({"status": "no_messages"}));
+    }
+
+    let date_str = chrono::Local::now().format("%b %-d, %Y").to_string();
+    let placeholder_title = format!("Session — {}", date_str);
+    let filename = format!("session_{}.md", chrono::Local::now().format("%Y-%m-%d_%H%M%S"));
+
+    sessions::complete_session(
+        &session_id,
+        &placeholder_title,
+        &filename,
+        &format!("# {}\n\n*Summary pending...*", placeholder_title),
+    )?;
+
+    let sid = session_id.clone();
+    let fname = filename.clone();
+    tokio::spawn(async move {
+        let auth_token = profiles::get_active_auth_token()
+            .or_else(|| profiles::get_active_api_key());
+
+        let auth_token = match auth_token {
+            Some(t) => t,
+            None => {
+                eprintln!("[summarize] No auth token available");
+                return;
+            }
+        };
+
+        let messages = chat_history.as_array().cloned().unwrap_or_default();
+        match crate::claude::summarize_conversation(&auth_token, &messages).await {
+            Ok((title, summary)) => {
+                let content = format!("# {}\n\n{}", title, summary);
+                if let Err(e) = sessions::complete_session(&sid, &title, &fname, &content) {
+                    eprintln!("[summarize] Failed to update session: {}", e);
+                }
+            }
+            Err(e) => {
+                eprintln!("[summarize] Background summary failed: {}", e);
+            }
+        }
+    });
+
+    Ok(json!({"status": "ok", "filename": filename}))
+}
+
 /// Runs the full chat loop (streaming + tool use rounds) with a generic emitter.
 /// Used by both the Tauri command and the dev HTTP server.
 pub async fn run_chat_loop(

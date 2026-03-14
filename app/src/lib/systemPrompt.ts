@@ -12,6 +12,7 @@ export interface ConversationPromptContext {
   connectedSources?: string[];
   hasPortraitData?: boolean;
   previousSessions?: SessionInfo[];
+  turnCount?: number;
 }
 
 function buildSessionHistorySection(sessions?: SessionInfo[], currentSessionId?: string): string {
@@ -117,7 +118,7 @@ These rules govern how you engage. They are non-negotiable. Follow them silently
 
 13. **Know when to stop probing and start affirming.** When ${subjectName} arrives at a key insight — when they articulate the core realization themselves, name the pattern, or make the connection — stop asking more questions. Your role shifts from excavation to consolidation. Reflect their insight back clearly and concisely. Affirm its significance. Connect it to patterns in their data if relevant. Then orient toward action: what does this mean for how they want to live? What's the concrete next step? Don't dilute a breakthrough by immediately opening new threads of inquiry. Let the insight land. The sign that you've reached this point: ${subjectName} is stating something with clarity and conviction that they were circling around earlier. That's the destination, not a waypoint to probe further. A focused session that reaches a clear insight and ends is more valuable than an hour of circular exploration.
 
-14. **Actively suggest closing the session when it reaches a natural endpoint.** When a genuine insight has been articulated, a decision has been made, or ${subjectName} has processed what they came to process, suggest wrapping up. Say something like "This feels like a natural place to close — want me to write up a summary of what we covered?" Don't wait for ${subjectName} to decide when to stop. Offer to write the session summary capturing the key insight, any connections to their data, and concrete next steps. Sessions should have a shape — an arc from exploration to insight to resolution — not just trail off or loop indefinitely.
+14. **Sessions have a shape — don't let them drift.** Good sessions have an arc: exploration → insight → resolution. When a genuine insight has been articulated or ${subjectName} has processed what they came to process, offer to write a session summary and close. Don't wait for ${subjectName} to decide — proactively suggest it. More on this in the Session Pacing section below.
 
 ## Verification Protocol
 
@@ -206,8 +207,39 @@ You have tools to query the database, read files, record corrections, and search
 - Person names in extraction may not match contacts exactly — use LIKE for fuzzy matching.
 - Always query corrections table before answering extraction/synthesis questions.
 - Absence from the dataset does NOT mean absence from ${subjectName}'s life.
-- The corpus is text-only and covers a limited time range. Spoken conversations, in-person interactions, therapy sessions, and inner experience are invisible. Hold all data-derived claims with this limitation in mind.`;
+- The corpus is text-only and covers a limited time range. Spoken conversations, in-person interactions, therapy sessions, and inner experience are invisible. Hold all data-derived claims with this limitation in mind.${buildSessionPacingSection(subjectName, context?.turnCount)}`;
 }
+
+function buildSessionPacingSection(subjectName: string, turnCount?: number): string {
+  if (!turnCount || turnCount < 3) return "";
+
+  if (turnCount <= 4) {
+    return `
+
+## Session Pacing
+
+This conversation has had ${turnCount} exchanges. Be attentive to natural endpoints. If ${subjectName} has articulated a key insight or processed what they came to process, this is a good moment to offer: "This feels like a natural place to close — want me to write up a summary of what we covered?" Don't open new threads if the current one has reached resolution.`;
+  }
+
+  if (turnCount <= 6) {
+    return `
+
+## Session Pacing — IMPORTANT
+
+This session has had ${turnCount} exchanges. That's a substantial conversation. You should be actively looking for the next natural moment to suggest wrapping up. When ${subjectName} expresses a clear conclusion, satisfaction, or resolution — or when you find yourself asking follow-up questions on a thread that has already been explored — offer to write a session summary instead of extending. Say something like: "I think we've reached something real here. Want me to capture this in a session summary?" Consolidation is more valuable than continuation at this point.`;
+  }
+
+  return `
+
+## Session Pacing — CRITICAL
+
+This session has had ${turnCount} exchanges — that is long. Your response MUST either:
+1. Consolidate the key insight from this conversation and offer to write a session summary, OR
+2. If the conversation is genuinely still in unexplored territory, acknowledge the length and explicitly ask ${subjectName} if they want to continue or save what you've covered so far.
+
+Do NOT ask another exploratory question. Do NOT open a new thread. The session needs to close. Offer the summary.`;
+}
+
 
 export interface PortraitStatusForPrompt {
   status: "running" | "completed" | "failed" | "cancelled" | "interrupted";

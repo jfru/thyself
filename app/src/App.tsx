@@ -191,6 +191,7 @@ interface MainAppProps {
 
 const OPEN_SETUP_ACTION = "__OPEN_SETUP__";
 const OPEN_PORTRAIT_ACTION = "__OPEN_PORTRAIT__";
+const WRAP_UP_SESSION_MESSAGE = "Let's wrap up. Please write a session summary of what we covered.";
 const CONTINUE_SETUP_MESSAGE = "I'm ready to continue connecting my data.";
 const PRIVACY_SUBTITLE =
   "Thyself reads your messages to understand your life — your relationships, patterns, and growth. Your data is stored only on this computer.";
@@ -263,7 +264,7 @@ function makeSetupStartMessage(): SystemMessage {
   };
 }
 
-function makeSourceNudgeMessage(status: SourceConnectionStatus): SystemMessage {
+function makeSourceNudgeMessage(status: SourceConnectionStatus, opts?: { portraitCompleted?: boolean }): SystemMessage | null {
   if (status.connected.length === 0) {
     return {
       role: "system",
@@ -276,6 +277,9 @@ function makeSourceNudgeMessage(status: SourceConnectionStatus): SystemMessage {
     };
   }
   if (status.missing.length === 0) {
+    if (opts?.portraitCompleted) {
+      return null;
+    }
     return {
       role: "system",
       text: "All your data sources are connected! Ready to build your portrait?",
@@ -286,19 +290,22 @@ function makeSourceNudgeMessage(status: SourceConnectionStatus): SystemMessage {
       timestamp: Date.now(),
     };
   }
-  return {
+  const base: SystemMessage = {
     role: "system",
     text: `You have ${status.connected.length} of ${status.total} data sources connected. Connecting more will give Thyself a richer understanding of your life.`,
     action: {
       label: "Connect more sources",
       message: OPEN_SETUP_ACTION,
     },
-    secondaryAction: {
-      label: "Build Your Portrait",
-      message: OPEN_PORTRAIT_ACTION,
-    },
     timestamp: Date.now(),
   };
+  if (!opts?.portraitCompleted) {
+    base.secondaryAction = {
+      label: "Build Your Portrait",
+      message: OPEN_PORTRAIT_ACTION,
+    };
+  }
+  return base;
 }
 
 function makeNoDataMessage(
@@ -318,7 +325,7 @@ function makeNoDataMessage(
   };
 }
 
-async function makeConversationNudgeMessage(sources?: string[]): Promise<SystemMessage> {
+async function makeConversationNudgeMessage(sources?: string[], opts?: { portraitCompleted?: boolean }): Promise<SystemMessage | null> {
   const status = await getSourceConnectionStatus(sources);
   if (status.connected.length === 0) {
     return {
@@ -331,18 +338,7 @@ async function makeConversationNudgeMessage(sources?: string[]): Promise<SystemM
       timestamp: Date.now(),
     };
   }
-  if (status.missing.length > 0) {
-    return makeSourceNudgeMessage(status);
-  }
-  return {
-    role: "system",
-    text: "All your data sources are connected! Ready to build your portrait?",
-    action: {
-      label: "Build Your Portrait",
-      message: OPEN_PORTRAIT_ACTION,
-    },
-    timestamp: Date.now(),
-  };
+  return makeSourceNudgeMessage(status, opts);
 }
 
 function normalizeSetupMessages(messages: Message[]): Message[] {
@@ -373,15 +369,8 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
     started_at?: string | null; updated_at?: string | null; finished_at?: string | null;
     extraction_months_covered?: string | null; results_summary?: string | null;
   } | null>(null);
-  const { messages, streamingSessionIds, sendMessage, stopStreaming, clearMessages, setMessages, switchToSession, getSessionMessages, isSessionStreaming } =
-    useStreamChat({
-      subjectName: profile.subject_name,
-      onboardingStatus: profile.onboarding_status,
-      selectedSources,
-      connectedSources,
-      activeSessionKind,
-      portraitStatus,
-    });
+  const portraitCompleted = portraitStatus?.status === "completed";
+  const nudgeOpts = { portraitCompleted };
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activeSessionId, setActiveSessionIdRaw] = useState<string | null>(null);
   const setActiveSessionId = useCallback((id: string | null) => {
@@ -395,11 +384,38 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
   const [isReadOnly, setIsReadOnly] = useState(false);
   const [sidebarRefreshKey, setSidebarRefreshKey] = useState(0);
 
-  const isStreamingHere = streamingSessionIds.has(activeSessionId ?? "");
-
   const refreshSidebar = useCallback(() => {
     setSidebarRefreshKey((k) => k + 1);
   }, []);
+
+  const handleSessionCompleted = useCallback(async (sessionId: string) => {
+    try {
+      const result = await invokeCommand<{ session: SessionMeta; summary: string | null }>(
+        "load_session", { sessionId }
+      );
+      if (result.session.status === "completed") {
+        setSessionSummary(result.summary);
+        setSessionName(result.session.name);
+        setIsReadOnly(true);
+        refreshSidebar();
+      }
+    } catch (err) {
+      console.error("Failed to finalize session:", err);
+    }
+  }, [refreshSidebar]);
+
+  const { messages, streamingSessionIds, sendMessage, stopStreaming, clearMessages, setMessages, switchToSession, getSessionMessages, isSessionStreaming } =
+    useStreamChat({
+      subjectName: profile.subject_name,
+      onboardingStatus: profile.onboarding_status,
+      selectedSources,
+      connectedSources,
+      activeSessionKind,
+      portraitStatus,
+      onSessionCompleted: handleSessionCompleted,
+    });
+
+  const isStreamingHere = streamingSessionIds.has(activeSessionId ?? "");
 
   const fetchPortraitStatus = useCallback(async () => {
     try {
@@ -518,8 +534,8 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
             if (activeKind === "setup") {
               switchToSession(active.id, [makeNoDataMessage(activeKind)]);
             } else {
-              const nudge = await makeConversationNudgeMessage(selectedSources);
-              switchToSession(active.id, [nudge]);
+              const nudge = await makeConversationNudgeMessage(selectedSources, nudgeOpts);
+              switchToSession(active.id, nudge ? [nudge] : []);
             }
           } else {
             switchToSession(active.id, []);
@@ -583,8 +599,8 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
         } else {
           const status = await getSourceConnectionStatus(selectedSources);
           if (status.connected.length > 0) {
-            const nudge = makeSourceNudgeMessage(status);
-            switchToSession(session.id, [...normalizedHistory, nudge]);
+            const nudge = makeSourceNudgeMessage(status, nudgeOpts);
+            switchToSession(session.id, nudge ? [...normalizedHistory, nudge] : normalizedHistory);
           } else {
             switchToSession(session.id, [...normalizedHistory, makeSetupContinueMessage()]);
           }
@@ -639,8 +655,8 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
       if (session.chatHistory && Array.isArray(session.chatHistory) && session.chatHistory.length > 0) {
         switchToSession(session.id, session.chatHistory);
       } else {
-        const nudge = await makeConversationNudgeMessage(selectedSources);
-        switchToSession(session.id, [nudge]);
+        const nudge = await makeConversationNudgeMessage(selectedSources, nudgeOpts);
+        switchToSession(session.id, nudge ? [nudge] : []);
       }
 
       if (session.status === "completed") {
@@ -753,13 +769,15 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
       ) {
         const status = await getSourceConnectionStatus(selectedSources);
         if (status.connected.length === 0) {
-          setMessages((prev) => [...prev, makeSourceNudgeMessage(status)]);
+          const nudge = makeSourceNudgeMessage(status, nudgeOpts);
+          if (nudge) setMessages((prev) => [...prev, nudge]);
           return;
         }
         if (status.missing.length > 0) {
           const hasData = await hasImportedData();
           if (!hasData) {
-            setMessages((prev) => [...prev, makeSourceNudgeMessage(status)]);
+            const nudge = makeSourceNudgeMessage(status, nudgeOpts);
+            if (nudge) setMessages((prev) => [...prev, nudge]);
             return;
           }
         }
@@ -805,14 +823,15 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
 
   // Persist incrementally so refresh/crash during long tool runs
   // (e.g. Gmail import) doesn't lose in-flight chat history.
+  // Never save to completed (read-only) sessions.
   useEffect(() => {
-    if (!activeSessionId) return;
+    if (!activeSessionId || isReadOnly) return;
     const sessionId = activeSessionId;
     const timer = window.setTimeout(() => {
       void saveCurrentMessages(sessionId, messages);
     }, 400);
     return () => window.clearTimeout(timer);
-  }, [activeSessionId, messages, saveCurrentMessages]);
+  }, [activeSessionId, isReadOnly, messages, saveCurrentMessages]);
 
   // Detect when any session stops streaming — save its messages and
   // refresh UI state if it was the active session.
@@ -885,14 +904,16 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
           } catch { /* already exists */ }
           refreshSidebar();
 
-          setMessages((prev) => {
-            const last = prev[prev.length - 1];
-            const nudge = makeSourceNudgeMessage(status);
-            if (last?.role === "system" && !!(last as SystemMessage).action) {
-              return [...prev.slice(0, -1), nudge];
-            }
-            return [...prev, nudge];
-          });
+          const nudge = makeSourceNudgeMessage(status, nudgeOpts);
+          if (nudge) {
+            setMessages((prev) => {
+              const last = prev[prev.length - 1];
+              if (last?.role === "system" && !!(last as SystemMessage).action) {
+                return [...prev.slice(0, -1), nudge];
+              }
+              return [...prev, nudge];
+            });
+          }
         }
       } catch {
         // best effort
@@ -907,14 +928,100 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
     };
   }, [isStreamingHere, activeSessionKind, selectedSources, refreshSidebar, setMessages]);
 
-  const handleNewSession = useCallback(() => {
-    switchToSession(null, []);
-    setActiveSessionId(null);
-    setActiveSessionKind(null);
-    setSessionSummary(null);
-    setSessionName(null);
-    setIsReadOnly(false);
-  }, [switchToSession]);
+  // Show a "Wrap up" button after enough conversation turns.
+  // Only shown once per session — tracks the last turn count it fired on
+  // so it doesn't re-appear after every subsequent response.
+  const WRAP_UP_TURN_THRESHOLD = 4;
+  const WRAP_UP_REPEAT_INTERVAL = 3;
+  const wrapUpTimerRef = useRef<number | null>(null);
+  const wrapUpLastShownAtRef = useRef<number>(0);
+  useEffect(() => {
+    if (isStreamingHere || activeSessionKind !== "conversation" || isReadOnly) {
+      if (wrapUpTimerRef.current !== null) {
+        window.clearTimeout(wrapUpTimerRef.current);
+        wrapUpTimerRef.current = null;
+      }
+      return;
+    }
+
+    const userTurnCount = messages.filter(m => m.role === "user").length;
+    if (userTurnCount < WRAP_UP_TURN_THRESHOLD) return;
+
+    const nextShowAt = wrapUpLastShownAtRef.current === 0
+      ? WRAP_UP_TURN_THRESHOLD
+      : wrapUpLastShownAtRef.current + WRAP_UP_REPEAT_INTERVAL;
+    if (userTurnCount < nextShowAt) return;
+
+    const lastMsg = messages[messages.length - 1];
+    if (lastMsg?.role === "system") return;
+
+    const targetSessionId = activeSessionId;
+    wrapUpTimerRef.current = window.setTimeout(() => {
+      wrapUpTimerRef.current = null;
+      if (activeSessionId !== targetSessionId) return;
+      wrapUpLastShownAtRef.current = userTurnCount;
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        if (last?.role === "system") return prev;
+        const wrapUp: SystemMessage = {
+          role: "system",
+          text: "Ready to wrap up this session?",
+          action: {
+            label: "Wrap up",
+            message: WRAP_UP_SESSION_MESSAGE,
+          },
+          timestamp: Date.now(),
+        };
+        return [...prev, wrapUp];
+      });
+    }, 3000);
+
+    return () => {
+      if (wrapUpTimerRef.current !== null) {
+        window.clearTimeout(wrapUpTimerRef.current);
+        wrapUpTimerRef.current = null;
+      }
+    };
+  }, [isStreamingHere, activeSessionId, activeSessionKind, isReadOnly, messages, setMessages]);
+
+  const handleNewSession = useCallback(async () => {
+    const oldSessionId = activeSessionId;
+    const oldMessages = messages;
+
+    const hasUserMessages = oldSessionId && oldMessages.some(m => m.role === "user");
+
+    if (hasUserMessages) {
+      try {
+        await saveCurrentMessages(oldSessionId, oldMessages);
+        await invokeCommand("close_and_summarize_session", { sessionId: oldSessionId });
+      } catch (err) {
+        console.error("Failed to close old session:", err);
+      }
+    }
+
+    wrapUpLastShownAtRef.current = 0;
+
+    try {
+      const session = await invokeCommand<SessionMeta>("create_session", {
+        kind: "conversation",
+      });
+      setActiveSessionId(session.id);
+      setActiveSessionKind("conversation");
+      setSessionSummary(null);
+      setSessionName(null);
+      setIsReadOnly(false);
+      switchToSession(session.id, []);
+      refreshSidebar();
+    } catch (err) {
+      console.error("Failed to create new session:", err);
+      switchToSession(null, []);
+      setActiveSessionId(null);
+      setActiveSessionKind(null);
+      setSessionSummary(null);
+      setSessionName(null);
+      setIsReadOnly(false);
+    }
+  }, [activeSessionId, messages, saveCurrentMessages, switchToSession, refreshSidebar]);
 
   const handleClearSession = useCallback(async () => {
     clearMessages();
@@ -925,14 +1032,20 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
       if (activeSessionKind === "setup") {
         setMessages([makeNoDataMessage(activeSessionKind)]);
       } else {
-        const nudge = await makeConversationNudgeMessage(selectedSources);
-        setMessages([nudge]);
+        const nudge = await makeConversationNudgeMessage(selectedSources, nudgeOpts);
+        if (nudge) setMessages([nudge]);
       }
     }
   }, [clearMessages, activeSessionId, activeSessionKind, profile.onboarding_status, selectedSources, saveCurrentMessages, setMessages]);
 
+  const loadRequestRef = useRef(0);
+
   const handleLoadSession = useCallback(
     async (sessionId: string) => {
+      const requestId = ++loadRequestRef.current;
+      const isStale = () => loadRequestRef.current !== requestId;
+
+      wrapUpLastShownAtRef.current = 0;
       try {
         // If this session is streaming in the background, switch to its
         // cached state which has the latest in-flight messages.
@@ -943,6 +1056,31 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
             session: SessionMeta;
             summary: string | null;
           }>("load_session", { sessionId });
+          if (isStale()) return;
+          const { session, summary } = result;
+          setActiveSessionKind((session.kind ?? "conversation") as "conversation" | "setup" | "portrait");
+          setSessionName(session.name);
+          if (session.status === "completed") {
+            setSessionSummary(summary);
+            setIsReadOnly(true);
+          } else {
+            setSessionSummary(null);
+            setIsReadOnly(false);
+          }
+          return;
+        }
+
+        // Use cached messages for sessions we've already loaded (avoids
+        // a backend round-trip and the lag it causes).
+        const cached = getSessionMessages(sessionId);
+        if (cached.length > 0) {
+          setActiveSessionId(sessionId);
+          switchToSession(sessionId);
+          const result = await invokeCommand<{
+            session: SessionMeta;
+            summary: string | null;
+          }>("load_session", { sessionId });
+          if (isStale()) return;
           const { session, summary } = result;
           setActiveSessionKind((session.kind ?? "conversation") as "conversation" | "setup" | "portrait");
           setSessionName(session.name);
@@ -960,6 +1098,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
           session: SessionMeta;
           summary: string | null;
         }>("load_session", { sessionId });
+        if (isStale()) return;
 
         const { session, summary } = result;
 
@@ -980,8 +1119,10 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
               switchToSession(session.id, normalized);
             } else {
               const status = await getSourceConnectionStatus(selectedSources);
+              if (isStale()) return;
               if (status.connected.length > 0) {
-                switchToSession(session.id, [...normalized, makeSourceNudgeMessage(status)]);
+                const nudge = makeSourceNudgeMessage(status, nudgeOpts);
+                switchToSession(session.id, nudge ? [...normalized, nudge] : normalized);
               } else {
                 switchToSession(session.id, [...normalized, makeSetupContinueMessage()]);
               }
@@ -994,8 +1135,9 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
           if (loadedKind === "setup") {
             switchToSession(session.id, [makeNoDataMessage(loadedKind)]);
           } else {
-            const nudge = await makeConversationNudgeMessage(selectedSources);
-            switchToSession(session.id, [nudge]);
+            const nudge = await makeConversationNudgeMessage(selectedSources, nudgeOpts);
+            if (isStale()) return;
+            switchToSession(session.id, nudge ? [nudge] : []);
           }
         } else {
           switchToSession(session.id, []);
@@ -1012,7 +1154,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
         console.error("Failed to load session:", err);
       }
     },
-    [switchToSession, isSessionStreaming, profile.onboarding_status, selectedSources]
+    [switchToSession, getSessionMessages, isSessionStreaming, profile.onboarding_status, selectedSources]
   );
 
   return (

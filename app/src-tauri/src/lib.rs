@@ -107,6 +107,7 @@ pub fn run() {
             list_sessions,
             load_session,
             save_session_messages,
+            close_and_summarize_session,
             get_sync_status,
             list_profiles,
             cmd_create_profile,

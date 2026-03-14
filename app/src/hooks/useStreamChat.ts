@@ -110,6 +110,7 @@ export interface StreamChatOptions {
   connectedSources?: string[];
   activeSessionKind?: "conversation" | "setup" | "portrait" | null;
   portraitStatus?: { status: string; phase?: string; results_summary?: string | null } | null;
+  onSessionCompleted?: (sessionId: string) => void;
 }
 
 interface SendMessageOptions {
@@ -433,6 +434,14 @@ export function useStreamChat(opts: StreamChatOptions = {}) {
                   ...updated[lastIdx],
                   isStreaming: false,
                 } as AssistantMessage;
+
+                const am = updated[lastIdx] as AssistantMessage;
+                const wroteSession = am.blocks.some(
+                  (b) => b.type === "tool_use" && b.name === "write_session_file" && b.status === "complete"
+                );
+                if (wroteSession) {
+                  optsRef.current.onSessionCompleted?.(targetSessionId);
+                }
               }
               sessionMessagesRef.current.set(targetSessionId, updated);
 
@@ -564,6 +573,7 @@ export function useStreamChat(opts: StreamChatOptions = {}) {
           systemPrompt = buildOnboardingPrompt(subjectName || "User", effectiveSelectedSources);
         } else {
           const hasPortraitData = portraitStatus?.status === "completed";
+          const turnCount = allMessages.filter(m => m.role === "user").length;
           systemPrompt = buildSystemPrompt(subjectName || "User", targetSessionId, {
             portraitStatus: portraitStatus ? {
               status: portraitStatus.status as "running" | "completed" | "failed" | "cancelled" | "interrupted",
@@ -573,6 +583,7 @@ export function useStreamChat(opts: StreamChatOptions = {}) {
             connectedSources: connectedSources?.length ? connectedSources : effectiveSelectedSources,
             hasPortraitData,
             previousSessions,
+            turnCount,
           });
         }
 
