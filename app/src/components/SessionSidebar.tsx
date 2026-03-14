@@ -361,7 +361,7 @@ export function SessionSidebar({
         )}
         <button
           onClick={() => setShowFeedback(true)}
-          className="flex w-full items-center gap-2 px-4 py-1.5 text-left text-[11px] text-zinc-600 hover:text-zinc-300 hover:bg-zinc-900 transition-colors"
+          className="flex w-full items-center gap-2 px-4 py-1.5 text-left text-[11px] text-amber-500/70 hover:text-amber-400 hover:bg-zinc-900 transition-colors"
         >
           <MessageSquareHeart size={12} className="flex-shrink-0" />
           Send feedback
