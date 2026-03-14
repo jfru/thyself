@@ -396,6 +396,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
       if (result.session.status === "completed") {
         sessionMetaCacheRef.current.set(sessionId, {
           readOnly: true, summary: result.summary, name: result.session.name,
+          kind: result.session.kind ?? "conversation",
         });
         setSessionSummary(result.summary);
         setSessionName(result.session.name);
@@ -543,7 +544,13 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
           } else {
             switchToSession(active.id, []);
           }
-          if (full.session.status === "completed") {
+          const ro = full.session.status === "completed";
+          sessionMetaCacheRef.current.set(active.id, {
+            readOnly: ro, summary: full.summary, name: full.session.name,
+            kind: full.session.kind ?? "conversation",
+          });
+          setSessionName(full.session.name);
+          if (ro) {
             setSessionSummary(full.summary);
             setIsReadOnly(true);
           }
@@ -623,7 +630,9 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
         switchToSession(session.id, [welcomeMsg]);
       }
 
-      if (session.status === "completed") {
+      const ro = session.status === "completed";
+      sessionMetaCacheRef.current.set(session.id, { readOnly: ro, summary, name: session.name, kind: session.kind ?? "setup" });
+      if (ro) {
         setSessionSummary(summary);
         setIsReadOnly(true);
       } else {
@@ -662,7 +671,9 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
         switchToSession(session.id, nudge ? [nudge] : []);
       }
 
-      if (session.status === "completed") {
+      const ro = session.status === "completed";
+      sessionMetaCacheRef.current.set(session.id, { readOnly: ro, summary, name: session.name, kind: session.kind ?? "portrait" });
+      if (ro) {
         setSessionSummary(summary);
         setIsReadOnly(true);
       } else {
@@ -861,14 +872,11 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
               summary: string | null;
             }>("load_session", { sessionId: id });
             const { session, summary } = result;
+            const ro = session.status === "completed";
+            sessionMetaCacheRef.current.set(id, { readOnly: ro, summary, name: session.name, kind: session.kind ?? "conversation" });
             setSessionName(session.name);
-            if (session.status === "completed") {
-              setSessionSummary(summary);
-              setIsReadOnly(true);
-            } else {
-              setSessionSummary(null);
-              setIsReadOnly(false);
-            }
+            setSessionSummary(summary);
+            setIsReadOnly(ro);
           } catch (err) {
             console.error("Failed to refresh active session state:", err);
           }
@@ -1042,7 +1050,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
   }, [clearMessages, activeSessionId, activeSessionKind, profile.onboarding_status, selectedSources, saveCurrentMessages, setMessages]);
 
   const loadRequestRef = useRef(0);
-  const sessionMetaCacheRef = useRef<Map<string, { readOnly: boolean; summary: string | null; name: string }>>(new Map());
+  const sessionMetaCacheRef = useRef<Map<string, { readOnly: boolean; summary: string | null; name: string; kind: string }>>(new Map());
 
   const handleLoadSession = useCallback(
     async (sessionId: string) => {
@@ -1051,57 +1059,24 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
 
       wrapUpLastShownAtRef.current = 0;
 
+      // Immediately swap all visible state in one React batch so there's
+      // no intermediate render showing stale content or wrong controls.
+      setActiveSessionId(sessionId);
+      switchToSession(sessionId);
       const cachedMeta = sessionMetaCacheRef.current.get(sessionId);
       if (cachedMeta) {
+        setActiveSessionKind(cachedMeta.kind as "conversation" | "setup" | "portrait");
         setIsReadOnly(cachedMeta.readOnly);
         setSessionSummary(cachedMeta.summary);
         setSessionName(cachedMeta.name);
       } else {
+        setActiveSessionKind("conversation");
         setIsReadOnly(false);
         setSessionSummary(null);
+        setSessionName(null);
       }
+
       try {
-        // If this session is streaming in the background, switch to its
-        // cached state which has the latest in-flight messages.
-        if (isSessionStreaming(sessionId)) {
-          setActiveSessionId(sessionId);
-          switchToSession(sessionId);
-          const result = await invokeCommand<{
-            session: SessionMeta;
-            summary: string | null;
-          }>("load_session", { sessionId });
-          if (isStale()) return;
-          const { session, summary } = result;
-          const ro = session.status === "completed";
-          sessionMetaCacheRef.current.set(sessionId, { readOnly: ro, summary, name: session.name });
-          setActiveSessionKind((session.kind ?? "conversation") as "conversation" | "setup" | "portrait");
-          setSessionName(session.name);
-          setSessionSummary(summary);
-          setIsReadOnly(ro);
-          return;
-        }
-
-        // Use cached messages for sessions we've already loaded (avoids
-        // a backend round-trip and the lag it causes).
-        const cached = getSessionMessages(sessionId);
-        if (cached.length > 0) {
-          setActiveSessionId(sessionId);
-          switchToSession(sessionId);
-          const result = await invokeCommand<{
-            session: SessionMeta;
-            summary: string | null;
-          }>("load_session", { sessionId });
-          if (isStale()) return;
-          const { session, summary } = result;
-          const ro = session.status === "completed";
-          sessionMetaCacheRef.current.set(sessionId, { readOnly: ro, summary, name: session.name });
-          setActiveSessionKind((session.kind ?? "conversation") as "conversation" | "setup" | "portrait");
-          setSessionName(session.name);
-          setSessionSummary(summary);
-          setIsReadOnly(ro);
-          return;
-        }
-
         const result = await invokeCommand<{
           session: SessionMeta;
           summary: string | null;
@@ -1109,11 +1084,20 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
         if (isStale()) return;
 
         const { session, summary } = result;
+        const ro = session.status === "completed";
+        sessionMetaCacheRef.current.set(sessionId, { readOnly: ro, summary, name: session.name, kind: session.kind ?? "conversation" });
 
-        setActiveSessionId(session.id);
         setActiveSessionKind((session.kind ?? "conversation") as "conversation" | "setup" | "portrait");
         setSessionName(session.name);
+        setSessionSummary(summary);
+        setIsReadOnly(ro);
 
+        // If we already showed cached messages, no need to reload them.
+        if (getSessionMessages(sessionId).length > 0 || isSessionStreaming(sessionId)) {
+          return;
+        }
+
+        // First load — populate messages from backend.
         if (session.chatHistory && Array.isArray(session.chatHistory) && session.chatHistory.length > 0) {
           const loadedKind = (session.kind ?? "conversation") as "conversation" | "setup" | "portrait";
           const normalized = loadedKind === "setup"
@@ -1150,11 +1134,6 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
         } else {
           switchToSession(session.id, []);
         }
-
-        const ro = session.status === "completed";
-        sessionMetaCacheRef.current.set(sessionId, { readOnly: ro, summary, name: session.name });
-        setSessionSummary(summary);
-        setIsReadOnly(ro);
       } catch (err) {
         console.error("Failed to load session:", err);
       }
