@@ -192,6 +192,7 @@ interface MainAppProps {
 
 const OPEN_SETUP_ACTION = "__OPEN_SETUP__";
 const OPEN_PORTRAIT_ACTION = "__OPEN_PORTRAIT__";
+const START_SESSION_ACTION = "__START_SESSION__";
 const WRAP_UP_SESSION_MESSAGE = "Let's wrap up. Please write a session summary of what we covered.";
 const CONTINUE_SETUP_MESSAGE = "I'm ready to continue connecting my data.";
 const PRIVACY_SUBTITLE =
@@ -440,6 +441,20 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
     return () => clearInterval(interval);
   }, [activeSessionKind, fetchPortraitStatus, portraitStatus?.status]);
 
+  useEffect(() => {
+    const prev = prevPortraitStatusRef.current;
+    const curr = portraitStatus?.status ?? null;
+    prevPortraitStatusRef.current = curr;
+
+    if (prev === "running" && curr === "completed") {
+      if (activeSessionKind === "portrait" && !isStreamingHere) {
+        sendMessage("Show me who I am.", undefined, { sessionKind: "portrait" });
+      } else {
+        pendingIdentitySummaryRef.current = true;
+      }
+    }
+  }, [portraitStatus?.status, activeSessionKind, isStreamingHere, sendMessage]);
+
   const hasImportedData = useCallback(async (): Promise<boolean> => {
     try {
       const result = await invokeCommand<{ rows?: Array<{ total?: number | string }> }>("query_db", {
@@ -453,6 +468,8 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
   }, []);
 
   const onboardingStarted = useRef(false);
+  const prevPortraitStatusRef = useRef<string | null>(null);
+  const pendingIdentitySummaryRef = useRef(false);
 
   useEffect(() => {
     async function resumeActiveSession() {
@@ -665,7 +682,8 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
       const status = await getSourceConnectionStatus(selectedSources);
       setConnectedSources(status.connected.filter(s => selectedSources.includes(s)));
 
-      if (session.chatHistory && Array.isArray(session.chatHistory) && session.chatHistory.length > 0) {
+      const hasHistory = session.chatHistory && Array.isArray(session.chatHistory) && session.chatHistory.length > 0;
+      if (hasHistory) {
         switchToSession(session.id, session.chatHistory);
       } else {
         const nudge = await makeConversationNudgeMessage(selectedSources, nudgeOpts);
@@ -682,10 +700,19 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
         setIsReadOnly(false);
       }
       refreshSidebar();
+
+      const shouldAutoTrigger = pendingIdentitySummaryRef.current ||
+        (portraitStatus?.status === "completed" && !hasHistory);
+      if (shouldAutoTrigger && !ro) {
+        pendingIdentitySummaryRef.current = false;
+        setTimeout(() => {
+          sendMessage("Show me who I am.", undefined, { sessionKind: "portrait" });
+        }, 300);
+      }
     } catch (err) {
       console.error("Failed to open portrait session:", err);
     }
-  }, [refreshSidebar, selectedSources, switchToSession]);
+  }, [refreshSidebar, selectedSources, switchToSession, portraitStatus?.status, sendMessage]);
 
   const addSourceToProfile = useCallback(
     async (sourceId: string): Promise<string[] | undefined> => {
@@ -736,6 +763,24 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
     ) => {
       if (text === OPEN_SETUP_ACTION) {
         await openSetupSession();
+        return;
+      }
+
+      if (text === START_SESSION_ACTION) {
+        try {
+          const session = await invokeCommand<SessionMeta>("create_session", {
+            kind: "conversation",
+          });
+          setActiveSessionId(session.id);
+          setActiveSessionKind("conversation");
+          setSessionName(session.name);
+          setSessionSummary(null);
+          setIsReadOnly(false);
+          switchToSession(session.id, []);
+          refreshSidebar();
+        } catch (err) {
+          console.error("Failed to start conversation session:", err);
+        }
         return;
       }
 
@@ -1136,12 +1181,20 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
           }
         } else {
           switchToSession(session.id, []);
+
+          const loadedKind = (session.kind ?? "conversation") as "conversation" | "setup" | "portrait";
+          if (loadedKind === "portrait" && (pendingIdentitySummaryRef.current || portraitStatus?.status === "completed") && !ro) {
+            pendingIdentitySummaryRef.current = false;
+            setTimeout(() => {
+              sendMessage("Show me who I am.", undefined, { sessionKind: "portrait" });
+            }, 300);
+          }
         }
       } catch (err) {
         console.error("Failed to load session:", err);
       }
     },
-    [switchToSession, getSessionMessages, isSessionStreaming, profile.onboarding_status, selectedSources]
+    [switchToSession, getSessionMessages, isSessionStreaming, profile.onboarding_status, selectedSources, portraitStatus?.status, sendMessage]
   );
 
   return (

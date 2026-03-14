@@ -110,6 +110,7 @@ export function ChatView({
   useEffect(() => {
     const ACTION_MAP: Record<string, string> = {
       build_portrait: "__OPEN_PORTRAIT__",
+      start_session: "__START_SESSION__",
     };
     const handler = (e: Event) => {
       const action = (e as CustomEvent).detail as string;
