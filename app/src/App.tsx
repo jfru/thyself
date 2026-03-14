@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
+import { flushSync } from "react-dom";
 import { ChatView } from "./components/ChatView";
 import { SessionSidebar } from "./components/SessionSidebar";
 import { UpdateNotification } from "./components/UpdateNotification";
@@ -1059,22 +1060,24 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
 
       wrapUpLastShownAtRef.current = 0;
 
-      // Immediately swap all visible state in one React batch so there's
-      // no intermediate render showing stale content or wrong controls.
-      setActiveSessionId(sessionId);
-      switchToSession(sessionId);
+      // Force React to commit all session-switch state updates to the DOM
+      // synchronously so there is zero chance of a stale-content frame.
       const cachedMeta = sessionMetaCacheRef.current.get(sessionId);
-      if (cachedMeta) {
-        setActiveSessionKind(cachedMeta.kind as "conversation" | "setup" | "portrait");
-        setIsReadOnly(cachedMeta.readOnly);
-        setSessionSummary(cachedMeta.summary);
-        setSessionName(cachedMeta.name);
-      } else {
-        setActiveSessionKind("conversation");
-        setIsReadOnly(false);
-        setSessionSummary(null);
-        setSessionName(null);
-      }
+      flushSync(() => {
+        setActiveSessionId(sessionId);
+        switchToSession(sessionId);
+        if (cachedMeta) {
+          setActiveSessionKind(cachedMeta.kind as "conversation" | "setup" | "portrait");
+          setIsReadOnly(cachedMeta.readOnly);
+          setSessionSummary(cachedMeta.summary);
+          setSessionName(cachedMeta.name);
+        } else {
+          setActiveSessionKind("conversation");
+          setIsReadOnly(false);
+          setSessionSummary(null);
+          setSessionName(null);
+        }
+      });
 
       try {
         const result = await invokeCommand<{
@@ -1170,6 +1173,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
           isReadOnly={isReadOnly}
           activeSessionKind={activeSessionKind}
           selectedSources={selectedSources}
+          connectedSources={connectedSources}
           onAddSource={addSourceToProfile}
           onRequestSourceSetup={requestSourceSetup}
           onRemoveSource={removeSourceFromProfile}

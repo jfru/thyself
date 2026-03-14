@@ -5,6 +5,7 @@ import { BrainCircuit, Mail, MessageCircle, MessageSquareText, Plus, Trash2 } fr
 
 interface SetupSourcesStatusPanelProps {
   selectedSources: string[];
+  connectedSources?: string[];
   onAddSource?: (sourceId: string) => void | Promise<void | string[]>;
   onRequestSourceSetup?: (
     sourceId: string,
@@ -39,10 +40,14 @@ function chooseLatestRun(runs: SyncRun[]): SyncRun | null {
 
 function statusLabel(
   run: SyncRun | null,
-  isSelected: boolean
+  isSelected: boolean,
+  knownConnected: boolean
 ): { text: string; tone: string } {
   if (!isSelected) return { text: "Not selected", tone: "text-zinc-500" };
-  if (!run) return { text: "Not connected", tone: "text-zinc-500" };
+  if (!run) {
+    if (knownConnected) return { text: "Connected", tone: "text-emerald-400" };
+    return { text: "Not connected", tone: "text-zinc-500" };
+  }
   if (run.status === "running") return { text: "Connecting...", tone: "text-amber-400" };
   if (run.status === "failed") return { text: "Not connected", tone: "text-zinc-500" };
   return { text: "Connected", tone: "text-emerald-400" };
@@ -50,10 +55,12 @@ function statusLabel(
 
 export function SetupSourcesStatusPanel({
   selectedSources,
+  connectedSources,
   onAddSource,
   onRequestSourceSetup,
   onRemoveSource,
 }: SetupSourcesStatusPanelProps) {
+  const connectedSet = useMemo(() => new Set(connectedSources ?? []), [connectedSources]);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [confirmRemoveSourceId, setConfirmRemoveSourceId] = useState<SourceId | null>(null);
@@ -130,7 +137,8 @@ export function SetupSourcesStatusPanel({
               .map((k) => syncStatus?.latest_by_source?.[k])
               .filter(Boolean) as SyncRun[];
             const latest = chooseLatestRun(runs);
-            const status = statusLabel(latest, true);
+            const isKnownConnected = source.syncKeys.some((k) => connectedSet.has(k)) || connectedSet.has(source.id);
+            const status = statusLabel(latest, true, isKnownConnected);
             const progressText =
               latest?.status === "running" &&
               typeof latest.progress_processed === "number" &&

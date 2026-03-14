@@ -22,6 +22,7 @@ interface ChatViewProps {
   isReadOnly?: boolean;
   activeSessionKind?: "conversation" | "setup" | "portrait" | null;
   selectedSources?: string[];
+  connectedSources?: string[];
   onAddSource?: (sourceId: string) => void | Promise<void | string[]>;
   onRequestSourceSetup?: (
     sourceId: string,
@@ -43,6 +44,7 @@ export function ChatView({
   isReadOnly,
   activeSessionKind,
   selectedSources = [],
+  connectedSources,
   onAddSource,
   onRequestSourceSetup,
   onRemoveSource,
@@ -172,6 +174,7 @@ export function ChatView({
       {activeSessionKind === "setup" && (
         <SetupSourcesStatusPanel
           selectedSources={selectedSources}
+          connectedSources={connectedSources}
           onAddSource={onAddSource}
           onRequestSourceSetup={onRequestSourceSetup}
           onRemoveSource={onRemoveSource}
