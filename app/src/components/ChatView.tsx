@@ -19,6 +19,7 @@ interface ChatViewProps {
   onClear?: () => void;
   sessionSummary?: string | null;
   sessionName?: string | null;
+  activeSessionId?: string | null;
   isReadOnly?: boolean;
   activeSessionKind?: "conversation" | "setup" | "portrait" | null;
   selectedSources?: string[];
@@ -42,6 +43,7 @@ export function ChatView({
   onClear,
   sessionSummary,
   sessionName,
+  activeSessionId,
   isReadOnly,
   activeSessionKind,
   selectedSources = [],
@@ -240,7 +242,7 @@ export function ChatView({
         </div>
       </div>
       {sessionSummary && sessionName && (
-        <SessionSummaryBlock summary={sessionSummary} sessionName={sessionName} />
+        <SessionSummaryBlock summary={sessionSummary} sessionName={sessionName} sessionId={activeSessionId ?? undefined} />
       )}
       {activeSessionKind === "setup" && (
         <SetupSourcesStatusPanel

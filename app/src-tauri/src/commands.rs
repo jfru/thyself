@@ -1000,6 +1000,44 @@ pub fn cmd_perform_restart() {
 }
 
 #[tauri::command]
+pub fn share_session_pdf(state: State<'_, DbState>, session_id: String) -> Result<(), String> {
+    let guard = state.conn.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("Database not open")?;
+
+    let pdf_file: Option<String> = conn
+        .query_row(
+            "SELECT pdf_file FROM sessions WHERE id = ?1",
+            [&session_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("Session not found: {}", e))?;
+
+    let pdf_name = pdf_file.ok_or("No PDF available for this session")?;
+    let pdf_path = get_data_dir().join("sessions").join(&pdf_name);
+
+    if !pdf_path.exists() {
+        return Err(format!("PDF file not found: {}", pdf_path.display()));
+    }
+
+    let script = format!(
+        "set the clipboard to POSIX file \"{}\"",
+        pdf_path.display()
+    );
+    let output = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(&script)
+        .output()
+        .map_err(|e| format!("Failed to run osascript: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("Clipboard copy failed: {}", stderr));
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 pub fn cmd_open_icloud_settings() {
     onboarding_tools::perform_open_icloud_settings();
 }

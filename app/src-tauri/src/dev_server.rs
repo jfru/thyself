@@ -87,6 +87,7 @@ pub async fn start_dev_server() {
         .route("/api/start_portrait_build", post(handle_start_portrait_build))
         .route("/api/cancel_portrait_build", post(handle_cancel_portrait_build))
         .route("/api/get_portrait_status", get(handle_get_portrait_status))
+        .route("/api/share_session_pdf", post(handle_share_session_pdf))
         .route("/api/cmd_send_auth_code", post(handle_send_auth_code))
         .route("/api/cmd_verify_auth_code", post(handle_verify_auth_code))
         .route("/api/cmd_check_subscription", post(handle_check_subscription))
@@ -1155,6 +1156,60 @@ async fn handle_get_portrait_status(
         Ok(val) => (StatusCode::OK, Json(val)),
         Err(rusqlite::Error::QueryReturnedNoRows) => (StatusCode::OK, Json(Value::Null)),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": format!("Query failed: {}", e) }))),
+    }
+}
+
+#[derive(Deserialize)]
+struct ShareSessionPdfReq {
+    #[serde(rename = "sessionId")]
+    session_id: String,
+}
+
+async fn handle_share_session_pdf(
+    AxumState(state): AxumState<Arc<AppState>>,
+    Json(body): Json<ShareSessionPdfReq>,
+) -> impl IntoResponse {
+    let guard = state.db.conn.lock().unwrap();
+    let conn = match guard.as_ref() {
+        Some(c) => c,
+        None => return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": "No database available"}))),
+    };
+
+    let pdf_file: Option<String> = match conn.query_row(
+        "SELECT pdf_file FROM sessions WHERE id = ?1",
+        [&body.session_id],
+        |row| row.get(0),
+    ) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::NOT_FOUND, Json(json!({"error": format!("Session not found: {}", e)}))),
+    };
+
+    let pdf_name = match pdf_file {
+        Some(n) => n,
+        None => return (StatusCode::NOT_FOUND, Json(json!({"error": "No PDF available for this session"}))),
+    };
+    let pdf_path = get_data_dir().join("sessions").join(&pdf_name);
+
+    if !pdf_path.exists() {
+        return (StatusCode::NOT_FOUND, Json(json!({"error": format!("PDF file not found: {}", pdf_path.display())})));
+    }
+
+    let script = format!(
+        "set the clipboard to POSIX file \"{}\"",
+        pdf_path.display()
+    );
+    let output = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(&script)
+        .output();
+
+    match output {
+        Ok(o) if o.status.success() => (StatusCode::OK, Json(json!({"status": "ok"}))),
+        Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": format!("Clipboard copy failed: {}", stderr)})))
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": format!("Failed to run osascript: {}", e)}))),
     }
 }
 

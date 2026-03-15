@@ -722,6 +722,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     status TEXT NOT NULL DEFAULT 'active',
     summary_file TEXT,
     summary TEXT,
+    pdf_file TEXT,
     chat_history TEXT DEFAULT '[]',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

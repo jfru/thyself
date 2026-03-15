@@ -1262,6 +1262,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
           onClear={!isReadOnly ? handleClearSession : undefined}
           sessionSummary={sessionSummary}
           sessionName={sessionName}
+          activeSessionId={activeSessionId}
           isReadOnly={isReadOnly}
           activeSessionKind={activeSessionKind}
           selectedSources={selectedSources}

@@ -3,6 +3,7 @@ mod commands;
 mod db;
 mod dev_server;
 mod onboarding_tools;
+mod pdf;
 mod profiles;
 mod sessions;
 mod tools;
@@ -74,6 +75,7 @@ pub fn run() {
         db::cleanup_stale_sync_runs(conn);
         db::cleanup_stale_portrait_runs(conn);
         sessions::migrate_from_json(conn);
+        sessions::backfill_session_pdfs(conn);
     }
     let db_state = db::DbState {
         conn: std::sync::Mutex::new(db_conn),
@@ -125,6 +127,7 @@ pub fn run() {
             cmd_create_checkout,
             cmd_create_portal_session,
             cmd_perform_restart,
+            share_session_pdf,
             cmd_open_icloud_settings,
             cmd_open_finder_iphone,
             cmd_debug_log,
