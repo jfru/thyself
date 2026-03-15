@@ -9,8 +9,11 @@ stored in ~/Library/Application Support/Thyself/.
 from pathlib import Path
 import os
 
-from dotenv import load_dotenv
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 # ─── Data directory (all user data lives here) ───────────────────────
 DATA_DIR = Path(os.environ.get(
