@@ -11,6 +11,12 @@ __pycache__/
 # Gmail OAuth credentials (contains client secret)
 gmail_client_secret.json
 
+# Personal/private data — never commit
+summary-for-*
+*.pdf
+generate_meditation.py
+app/test/*_session_script*.json
+
 # Tauri app
 app/node_modules/
 
