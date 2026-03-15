@@ -110,6 +110,23 @@ fn find_project_root() -> Option<PathBuf> {
             }
         }
     }
+
+    // Fallback: check the macOS app bundle Resources directory (production)
+    // Executable is at Thyself.app/Contents/MacOS/Thyself
+    // Bundled resources are at Thyself.app/Contents/Resources/
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(macos_dir) = exe.parent() {
+            let resources_dir = macos_dir
+                .parent()
+                .map(|contents| contents.join("Resources"));
+            if let Some(ref dir) = resources_dir {
+                if dir.join("config.py").exists() {
+                    return Some(dir.clone());
+                }
+            }
+        }
+    }
+
     None
 }
 
