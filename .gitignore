@@ -16,6 +16,7 @@ summary-for-*
 *.pdf
 generate_meditation.py
 app/test/*_session_script*.json
+corrections/apply_approved_merges.py
 
 # Tauri app
 app/node_modules/
