@@ -471,15 +471,23 @@ pub async fn list_files(dir: String, pattern: Option<String>) -> Result<Vec<Stri
 }
 
 #[tauri::command]
-pub async fn create_session(name: Option<String>, kind: Option<String>) -> Result<Value, String> {
-    let session = sessions::create_session(name.as_deref(), kind.as_deref())?;
+pub async fn create_session(
+    state: State<'_, DbState>,
+    name: Option<String>,
+    kind: Option<String>,
+) -> Result<Value, String> {
+    let guard = state.conn.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("Database not open")?;
+    let session = sessions::create_session(conn, name.as_deref(), kind.as_deref())?;
     Ok(serde_json::to_value(&session).map_err(|e| e.to_string())?)
 }
 
 #[tauri::command]
-pub async fn list_sessions() -> Result<Value, String> {
-    let manifest = sessions::read_manifest()?;
-    let summary: Vec<Value> = manifest
+pub async fn list_sessions(state: State<'_, DbState>) -> Result<Value, String> {
+    let guard = state.conn.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("Database not open")?;
+    let sessions = sessions::list_sessions(conn)?;
+    let summary: Vec<Value> = sessions
         .iter()
         .map(|s| {
             json!({
@@ -496,19 +504,13 @@ pub async fn list_sessions() -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub async fn load_session(session_id: String) -> Result<Value, String> {
-    let manifest = sessions::read_manifest()?;
-    let session = manifest
-        .iter()
-        .find(|s| s.id == session_id)
-        .ok_or_else(|| format!("Session not found: {}", session_id))?;
-
-    let summary = if let Some(ref file) = session.summary_file {
-        let path = get_data_dir().join("sessions").join(file);
-        fs::read_to_string(&path).ok()
-    } else {
-        None
-    };
+pub async fn load_session(
+    state: State<'_, DbState>,
+    session_id: String,
+) -> Result<Value, String> {
+    let guard = state.conn.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("Database not open")?;
+    let (session, summary) = sessions::load_session(conn, &session_id)?;
 
     Ok(json!({
         "session": session,
@@ -517,8 +519,14 @@ pub async fn load_session(session_id: String) -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub async fn save_session_messages(session_id: String, messages: Value) -> Result<Value, String> {
-    sessions::save_messages(&session_id, &messages)?;
+pub async fn save_session_messages(
+    state: State<'_, DbState>,
+    session_id: String,
+    messages: Value,
+) -> Result<Value, String> {
+    let guard = state.conn.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("Database not open")?;
+    sessions::save_messages(conn, &session_id, &messages)?;
     Ok(json!({"status": "ok"}))
 }
 
@@ -526,18 +534,21 @@ pub async fn save_session_messages(session_id: String, messages: Value) -> Resul
 /// then generates a summary in the background via a Claude API call.
 /// Returns immediately so the frontend can switch to a new session.
 #[tauri::command]
-pub async fn close_and_summarize_session(session_id: String) -> Result<Value, String> {
-    let manifest = sessions::read_manifest()?;
-    let session = manifest
-        .iter()
-        .find(|s| s.id == session_id)
-        .ok_or_else(|| format!("Session not found: {}", session_id))?;
+pub async fn close_and_summarize_session(
+    state: State<'_, DbState>,
+    session_id: String,
+) -> Result<Value, String> {
+    let (chat_history, status) = {
+        let guard = state.conn.lock().map_err(|e| e.to_string())?;
+        let conn = guard.as_ref().ok_or("Database not open")?;
+        let (session, _) = sessions::load_session(conn, &session_id)?;
+        (session.chat_history, session.status)
+    };
 
-    if session.status != "active" {
+    if status != "active" {
         return Ok(json!({"status": "already_closed"}));
     }
 
-    let chat_history = session.chat_history.clone();
     let has_messages = chat_history
         .as_array()
         .map(|a| a.iter().any(|m| m["role"].as_str() == Some("user")))
@@ -551,12 +562,17 @@ pub async fn close_and_summarize_session(session_id: String) -> Result<Value, St
     let placeholder_title = format!("Session — {}", date_str);
     let filename = format!("session_{}.md", chrono::Local::now().format("%Y-%m-%d_%H%M%S"));
 
-    sessions::complete_session(
-        &session_id,
-        &placeholder_title,
-        &filename,
-        &format!("# {}\n\n*Summary pending...*", placeholder_title),
-    )?;
+    {
+        let guard = state.conn.lock().map_err(|e| e.to_string())?;
+        let conn = guard.as_ref().ok_or("Database not open")?;
+        sessions::complete_session(
+            conn,
+            &session_id,
+            &placeholder_title,
+            &filename,
+            &format!("# {}\n\n*Summary pending...*", placeholder_title),
+        )?;
+    }
 
     let sid = session_id.clone();
     let fname = filename.clone();
@@ -576,8 +592,15 @@ pub async fn close_and_summarize_session(session_id: String) -> Result<Value, St
         match crate::claude::summarize_conversation(&auth_token, &messages).await {
             Ok((title, summary)) => {
                 let content = format!("# {}\n\n{}", title, summary);
-                if let Err(e) = sessions::complete_session(&sid, &title, &fname, &content) {
-                    eprintln!("[summarize] Failed to update session: {}", e);
+                match crate::db::open_db() {
+                    Ok(Some(conn)) => {
+                        if let Err(e) = sessions::complete_session(&conn, &sid, &title, &fname, &content) {
+                            eprintln!("[summarize] Failed to update session: {}", e);
+                        }
+                    }
+                    _ => {
+                        eprintln!("[summarize] Could not open DB for background update");
+                    }
                 }
             }
             Err(e) => {
