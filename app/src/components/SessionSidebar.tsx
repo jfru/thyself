@@ -3,7 +3,7 @@ import { invokeCommand, getServerEnv, setServerEnv } from "../lib/tauriBridge";
 import type { ServerEnv } from "../lib/tauriBridge";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Plus, MessageSquare, PanelLeftClose, PanelLeft, User, ChevronDown, ChevronRight, Trash2, Settings, Sparkles, Loader2, MessageSquareHeart, CreditCard } from "lucide-react";
-import { FeedbackModal } from "./FeedbackModal";
+import { FeedbackModal, captureScreenshotBeforeModal } from "./FeedbackModal";
 import type { SessionMeta, Profile } from "../lib/types";
 
 interface SessionSidebarProps {
@@ -54,7 +54,7 @@ export function SessionSidebar({
   async function loadSessions() {
     try {
       const manifest = await invokeCommand<SessionMeta[]>("list_sessions");
-      setSessions([...manifest].reverse());
+      setSessions(manifest);
     } catch (err) {
       console.error("Failed to load sessions:", err);
     }
@@ -150,7 +150,7 @@ export function SessionSidebar({
           <Plus size={18} />
         </button>
         <button
-          onClick={() => setShowFeedback(true)}
+          onClick={async () => { await captureScreenshotBeforeModal(); setShowFeedback(true); }}
           className="rounded-lg p-2 text-amber-500/70 hover:text-amber-400 hover:bg-zinc-800 transition-colors"
           title="Send feedback"
         >
@@ -360,7 +360,7 @@ export function SessionSidebar({
           </button>
         )}
         <button
-          onClick={() => setShowFeedback(true)}
+          onClick={async () => { await captureScreenshotBeforeModal(); setShowFeedback(true); }}
           className="flex w-full items-center gap-2 px-4 py-1.5 text-left text-[11px] text-amber-500/70 hover:text-amber-400 hover:bg-zinc-900 transition-colors"
         >
           <MessageSquareHeart size={12} className="flex-shrink-0" />

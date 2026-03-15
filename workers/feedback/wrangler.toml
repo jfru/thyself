@@ -5,3 +5,4 @@ compatibility_date = "2024-12-01"
 [[kv_namespaces]]
 binding = "FEEDBACK_CONTACTS"
 id = "81e4f2e688cb40e29339a9d316e3bb9d"
+preview_id = "22adde16a29445748ebe8ef45f9e42ea"

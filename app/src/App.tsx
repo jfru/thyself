@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { flushSync } from "react-dom";
+import { setChatContext } from "./lib/diagnostics";
 import { ChatView } from "./components/ChatView";
 import { SessionSidebar } from "./components/SessionSidebar";
 import { UpdateNotification } from "./components/UpdateNotification";
@@ -470,6 +471,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
   const onboardingStarted = useRef(false);
   const prevPortraitStatusRef = useRef<string | null>(null);
   const pendingIdentitySummaryRef = useRef(false);
+  const sessionLoadingRef = useRef(false);
 
   useEffect(() => {
     async function resumeActiveSession() {
@@ -544,6 +546,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
           (s) => s.status === "active" && (s.kind ?? "conversation") === "conversation"
         );
         if (active) {
+          sessionLoadingRef.current = true;
           setActiveSessionId(active.id);
           setActiveSessionKind((active.kind ?? "conversation") as "conversation" | "setup" | "portrait");
           const full = await invokeCommand<{ session: SessionMeta; summary: string | null }>(
@@ -562,6 +565,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
           } else {
             switchToSession(active.id, []);
           }
+          sessionLoadingRef.current = false;
           const ro = full.session.status === "completed";
           sessionMetaCacheRef.current.set(active.id, {
             readOnly: ro, summary: full.summary, name: full.session.name,
@@ -885,13 +889,18 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
   // (e.g. Gmail import) doesn't lose in-flight chat history.
   // Never save to completed (read-only) sessions.
   useEffect(() => {
-    if (!activeSessionId || isReadOnly) return;
+    if (!activeSessionId || isReadOnly || sessionLoadingRef.current) return;
     const sessionId = activeSessionId;
     const timer = window.setTimeout(() => {
+      if (sessionLoadingRef.current) return;
       void saveCurrentMessages(sessionId, messages);
     }, 400);
     return () => window.clearTimeout(timer);
   }, [activeSessionId, isReadOnly, messages, saveCurrentMessages]);
+
+  useEffect(() => {
+    setChatContext(messages, activeSessionKind ?? "conversation");
+  }, [messages, activeSessionKind]);
 
   // Detect when any session stops streaming — save its messages and
   // refresh UI state if it was the active session.
@@ -1104,6 +1113,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
       const isStale = () => loadRequestRef.current !== requestId;
 
       wrapUpLastShownAtRef.current = 0;
+      sessionLoadingRef.current = true;
 
       // Force React to commit all session-switch state updates to the DOM
       // synchronously so there is zero chance of a stale-content frame.
@@ -1129,7 +1139,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
           session: SessionMeta;
           summary: string | null;
         }>("load_session", { sessionId });
-        if (isStale()) return;
+        if (isStale()) { sessionLoadingRef.current = false; return; }
 
         const { session, summary } = result;
         const ro = session.status === "completed";
@@ -1142,6 +1152,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
 
         // If we already showed cached messages, no need to reload them.
         if (getSessionMessages(sessionId).length > 0 || isSessionStreaming(sessionId)) {
+          sessionLoadingRef.current = false;
           return;
         }
 
@@ -1192,6 +1203,8 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
         }
       } catch (err) {
         console.error("Failed to load session:", err);
+      } finally {
+        sessionLoadingRef.current = false;
       }
     },
     [switchToSession, getSessionMessages, isSessionStreaming, profile.onboarding_status, selectedSources, portraitStatus?.status, sendMessage]
