@@ -148,8 +148,9 @@ function buildIssueBody(body: FeedbackRequest, screenshotUrl: string | null): st
   if (diag?.sessionKind) {
     md += ` · **Session:** ${diag.sessionKind}`;
   }
-  if (diag?.userEmail || body.email?.trim()) {
-    md += " · **Contact:** provided (stored privately)";
+  const contactEmail = body.email?.trim() || diag?.userEmail;
+  if (contactEmail) {
+    md += ` · **Email:** ${contactEmail}`;
   }
   md += "\n";
 
@@ -319,16 +320,6 @@ export default {
     }
 
     const issue = (await ghResponse.json()) as { number: number };
-
-    // Store email privately
-    const email = body.email?.trim() || body.diagnostics?.userEmail;
-    if (email) {
-      await env.FEEDBACK_CONTACTS.put(
-        `issue-${issue.number}`,
-        email,
-        { expirationTtl: 60 * 60 * 24 * 365 }
-      );
-    }
 
     // Store screenshot in KV and update issue with public URL
     if (body.screenshot) {

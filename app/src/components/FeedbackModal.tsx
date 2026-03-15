@@ -58,7 +58,7 @@ export async function captureScreenshotBeforeModal(): Promise<void> {
 export function FeedbackModal({ onClose }: FeedbackModalProps) {
   const [type, setType] = useState<FeedbackType>("feedback");
   const [message, setMessage] = useState("");
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(() => localStorage.getItem("thyself-feedback-email") || "");
   const [state, setState] = useState<SubmitState>("idle");
   const [error, setError] = useState("");
   const [diagnostics, setDiagnostics] = useState<DiagnosticSnapshot | null>(null);
@@ -102,6 +102,7 @@ export function FeedbackModal({ onClose }: FeedbackModalProps) {
 
       const data = await res.json();
       if (data.success) {
+        if (email.trim()) localStorage.setItem("thyself-feedback-email", email.trim());
         setState("success");
       } else {
         setError(data.error || "Something went wrong");
