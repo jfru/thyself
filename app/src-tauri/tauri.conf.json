@@ -36,6 +36,16 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": {
+      "../../config.py": "",
+      "../../extract_whatsapp.py": "",
+      "../../import_whatsapp.py": "",
+      "../../sync/*.py": "sync/",
+      "../../sync/*.sh": "sync/",
+      "../../sync/*.js": "sync/",
+      "../../ingest/*.py": "ingest/",
+      "../../extraction/*.py": "extraction/"
+    },
     "createUpdaterArtifacts": true,
     "macOS": {
       "entitlements": "entitlements.plist",
