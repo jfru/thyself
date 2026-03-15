@@ -97,13 +97,18 @@ export function MessageList({ messages, isStreaming, onAction, onEditMessage, is
     -1
   );
 
+  const lastSystemMsg = lastSystemIdx >= 0 ? messages[lastSystemIdx] as SystemMessage : null;
+  const hasMessagesAfterLastSystem = lastSystemIdx >= 0 && lastSystemIdx < messages.length - 1;
+  const floatCtaToBottom = hasMessagesAfterLastSystem && !isReadOnly;
+
   return (
     <div className="pt-4 pb-6">
       {messages.map((msg, i) => {
         if (msg.role === "system") {
+          if (i === lastSystemIdx && floatCtaToBottom) return null;
           const isLastSystem = i === lastSystemIdx;
           const hasMessagesAfter = i < messages.length - 1;
-          const showButton = isLastSystem && !hasMessagesAfter && !isStreaming;
+          const showButton = isLastSystem && !hasMessagesAfter && !isStreaming && !isReadOnly;
           return (
             <SystemMessageBubble
               key={`msg-${i}`}
@@ -136,6 +141,14 @@ export function MessageList({ messages, isStreaming, onAction, onEditMessage, is
           </div>
         );
       })}
+      {lastSystemMsg && floatCtaToBottom && (
+        <SystemMessageBubble
+          key={`msg-${lastSystemIdx}-bottom`}
+          message={lastSystemMsg}
+          showButton={!isStreaming}
+          onAction={onAction}
+        />
+      )}
     </div>
   );
 }
