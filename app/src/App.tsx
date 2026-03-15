@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { flushSync } from "react-dom";
-import { setChatContext } from "./lib/diagnostics";
+import { setChatContext, setUserIdentity } from "./lib/diagnostics";
 import { ChatView } from "./components/ChatView";
 import { SessionSidebar } from "./components/SessionSidebar";
 import { UpdateNotification } from "./components/UpdateNotification";
@@ -923,6 +923,10 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
   useEffect(() => {
     setChatContext(messages, activeSessionKind ?? "conversation");
   }, [messages, activeSessionKind]);
+
+  useEffect(() => {
+    setUserIdentity(profile.subject_name, profile.email);
+  }, [profile.subject_name, profile.email]);
 
   // Detect when any session stops streaming — save its messages and
   // refresh UI state if it was the active session.

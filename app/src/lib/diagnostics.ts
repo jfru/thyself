@@ -64,10 +64,17 @@ export function getRecentLogs(): LogEntry[] {
 
 let _chatMessages: Message[] = [];
 let _sessionKind: string = "conversation";
+let _userName: string = "";
+let _userEmail: string = "";
 
 export function setChatContext(messages: Message[], sessionKind?: string) {
   _chatMessages = messages;
   if (sessionKind) _sessionKind = sessionKind;
+}
+
+export function setUserIdentity(name: string, email: string | null) {
+  _userName = name;
+  _userEmail = email ?? "";
 }
 
 function serializeConversation(messages: Message[]): string[] {
@@ -126,6 +133,8 @@ function serializeConversation(messages: Message[]): string[] {
 // --- Snapshot ---
 
 export interface DiagnosticSnapshot {
+  userName: string;
+  userEmail: string;
   syncStatus: Record<string, unknown> | null;
   appVersion: string;
   os: string;
@@ -175,6 +184,8 @@ export async function collectDiagnostics(): Promise<DiagnosticSnapshot> {
     _chatMessages.length > 0 ? serializeConversation(_chatMessages) : null;
 
   return {
+    userName: _userName,
+    userEmail: _userEmail,
     syncStatus,
     appVersion,
     os: getOS(),

@@ -19,6 +19,8 @@ interface LogEntry {
 }
 
 interface DiagnosticSnapshot {
+  userName?: string;
+  userEmail?: string;
   syncStatus: {
     latest_by_source: Record<string, SyncRunInfo>;
     has_sync_runs: boolean;
@@ -139,11 +141,14 @@ function buildIssueBody(body: FeedbackRequest, screenshotUrl: string | null): st
 
   let md = body.message.trim();
   md += "\n\n---\n";
-  md += `\n**App version:** ${appVersion} · **OS:** ${os}`;
+
+  const userName = diag?.userName || "unknown";
+  md += `\n**User:** ${userName}`;
+  md += ` · **App version:** ${appVersion} · **OS:** ${os}`;
   if (diag?.sessionKind) {
     md += ` · **Session:** ${diag.sessionKind}`;
   }
-  if (body.email?.trim()) {
+  if (diag?.userEmail || body.email?.trim()) {
     md += " · **Contact:** provided (stored privately)";
   }
   md += "\n";
@@ -316,10 +321,11 @@ export default {
     const issue = (await ghResponse.json()) as { number: number };
 
     // Store email privately
-    if (body.email?.trim()) {
+    const email = body.email?.trim() || body.diagnostics?.userEmail;
+    if (email) {
       await env.FEEDBACK_CONTACTS.put(
         `issue-${issue.number}`,
-        body.email!.trim(),
+        email,
         { expirationTtl: 60 * 60 * 24 * 365 }
       );
     }
