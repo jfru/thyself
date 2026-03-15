@@ -334,6 +334,7 @@ async fn handle_stop_chat(
 }
 
 async fn handle_create_session(
+    AxumState(state): AxumState<Arc<AppState>>,
     body: Option<Json<Value>>,
 ) -> impl IntoResponse {
     let name = body
@@ -346,7 +347,12 @@ async fn handle_create_session(
         .and_then(|b| b.get("kind"))
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
-    match sessions::create_session(name.as_deref(), kind.as_deref()) {
+    let guard = state.db.conn.lock().unwrap();
+    let conn = match guard.as_ref() {
+        Some(c) => c,
+        None => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Database not open"}))),
+    };
+    match sessions::create_session(conn, name.as_deref(), kind.as_deref()) {
         Ok(session) => (
             StatusCode::OK,
             Json(serde_json::to_value(&session).unwrap_or(json!({}))),
@@ -355,10 +361,17 @@ async fn handle_create_session(
     }
 }
 
-async fn handle_list_sessions() -> impl IntoResponse {
-    match sessions::read_manifest() {
-        Ok(manifest) => {
-            let summary: Vec<Value> = manifest
+async fn handle_list_sessions(
+    AxumState(state): AxumState<Arc<AppState>>,
+) -> impl IntoResponse {
+    let guard = state.db.conn.lock().unwrap();
+    let conn = match guard.as_ref() {
+        Some(c) => c,
+        None => return Json(json!([])),
+    };
+    match sessions::list_sessions(conn) {
+        Ok(sessions) => {
+            let summary: Vec<Value> = sessions
                 .iter()
                 .map(|s| {
                     json!({
@@ -383,25 +396,19 @@ struct LoadSessionReq {
     session_id: String,
 }
 
-async fn handle_load_session(Json(body): Json<LoadSessionReq>) -> impl IntoResponse {
-    let manifest = match sessions::read_manifest() {
-        Ok(m) => m,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e}))),
+async fn handle_load_session(
+    AxumState(state): AxumState<Arc<AppState>>,
+    Json(body): Json<LoadSessionReq>,
+) -> impl IntoResponse {
+    let guard = state.db.conn.lock().unwrap();
+    let conn = match guard.as_ref() {
+        Some(c) => c,
+        None => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Database not open"}))),
     };
-    let session = match manifest.iter().find(|s| s.id == body.session_id) {
-        Some(s) => s,
-        None => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "Session not found"})),
-            )
-        }
+    let (session, summary) = match sessions::load_session(conn, &body.session_id) {
+        Ok(r) => r,
+        Err(e) => return (StatusCode::NOT_FOUND, Json(json!({"error": e}))),
     };
-
-    let summary = session.summary_file.as_ref().and_then(|file| {
-        let path = get_data_dir().join("sessions").join(file);
-        std::fs::read_to_string(&path).ok()
-    });
 
     (
         StatusCode::OK,
@@ -420,9 +427,15 @@ struct SaveSessionMessagesReq {
 }
 
 async fn handle_save_session_messages(
+    AxumState(state): AxumState<Arc<AppState>>,
     Json(body): Json<SaveSessionMessagesReq>,
 ) -> impl IntoResponse {
-    match sessions::save_messages(&body.session_id, &body.messages) {
+    let guard = state.db.conn.lock().unwrap();
+    let conn = match guard.as_ref() {
+        Some(c) => c,
+        None => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Database not open"}))),
+    };
+    match sessions::save_messages(conn, &body.session_id, &body.messages) {
         Ok(_) => (StatusCode::OK, Json(json!({"status": "ok"}))),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e}))),
     }
@@ -434,12 +447,80 @@ struct CloseSessionReq {
 }
 
 async fn handle_close_and_summarize_session(
+    AxumState(state): AxumState<Arc<AppState>>,
     Json(body): Json<CloseSessionReq>,
 ) -> impl IntoResponse {
-    match crate::commands::close_and_summarize_session(body.session_id).await {
-        Ok(val) => (StatusCode::OK, Json(val)),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e}))),
+    let (chat_history, status) = {
+        let guard = state.db.conn.lock().unwrap();
+        let conn = match guard.as_ref() {
+            Some(c) => c,
+            None => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Database not open"}))),
+        };
+        match sessions::load_session(conn, &body.session_id) {
+            Ok((s, _)) => (s.chat_history, s.status),
+            Err(e) => return (StatusCode::NOT_FOUND, Json(json!({"error": e}))),
+        }
+    };
+
+    if status != "active" {
+        return (StatusCode::OK, Json(json!({"status": "already_closed"})));
     }
+
+    let has_messages = chat_history
+        .as_array()
+        .map(|a| a.iter().any(|m| m["role"].as_str() == Some("user")))
+        .unwrap_or(false);
+
+    if !has_messages {
+        return (StatusCode::OK, Json(json!({"status": "no_messages"})));
+    }
+
+    let date_str = chrono::Local::now().format("%b %-d, %Y").to_string();
+    let placeholder_title = format!("Session — {}", date_str);
+    let filename = format!("session_{}.md", chrono::Local::now().format("%Y-%m-%d_%H%M%S"));
+
+    {
+        let guard = state.db.conn.lock().unwrap();
+        let conn = match guard.as_ref() {
+            Some(c) => c,
+            None => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Database not open"}))),
+        };
+        if let Err(e) = sessions::complete_session(
+            conn,
+            &body.session_id,
+            &placeholder_title,
+            &filename,
+            &format!("# {}\n\n*Summary pending...*", placeholder_title),
+        ) {
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e})));
+        }
+    }
+
+    let sid = body.session_id.clone();
+    let fname = filename.clone();
+    tokio::spawn(async move {
+        let auth_token = profiles::get_active_auth_token()
+            .or_else(|| profiles::get_active_api_key());
+        let auth_token = match auth_token {
+            Some(t) => t,
+            None => return,
+        };
+        let messages = chat_history.as_array().cloned().unwrap_or_default();
+        match crate::claude::summarize_conversation(&auth_token, &messages).await {
+            Ok((title, summary)) => {
+                let content = format!("# {}\n\n{}", title, summary);
+                match db::open_db() {
+                    Ok(Some(conn)) => {
+                        let _ = sessions::complete_session(&conn, &sid, &title, &fname, &content);
+                    }
+                    _ => {}
+                }
+            }
+            Err(e) => eprintln!("[summarize] Background summary failed: {}", e),
+        }
+    });
+
+    (StatusCode::OK, Json(json!({"status": "ok", "filename": filename})))
 }
 
 async fn handle_sync_status(

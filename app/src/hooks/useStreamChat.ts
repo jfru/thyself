@@ -10,9 +10,8 @@ import type {
   FileAttachment,
   ContextAttachment,
   UserMessage,
-  SessionMeta,
 } from "../lib/types";
-import { buildSystemPrompt, buildOnboardingPrompt, buildPortraitPrompt, type SessionInfo } from "../lib/systemPrompt";
+import { buildSystemPrompt, buildOnboardingPrompt, buildPortraitPrompt } from "../lib/systemPrompt";
 
 function cleanToolResult(result: string): string {
   const idx = result.indexOf("\n\n[Reminder: Present interpretations");
@@ -544,21 +543,6 @@ export function useStreamChat(opts: StreamChatOptions = {}) {
           effectiveSessionKind === "setup";
         const shouldUsePortraitPrompt = effectiveSessionKind === "portrait";
 
-        let previousSessions: SessionInfo[] | undefined;
-        if (!shouldUseOnboardingPrompt && !shouldUsePortraitPrompt) {
-          try {
-            const manifest = await invokeCommand<SessionMeta[]>("list_sessions");
-            previousSessions = manifest.map(s => ({
-              id: s.id,
-              name: s.name,
-              createdAt: s.createdAt,
-              status: s.status,
-              kind: s.kind,
-              summaryFile: s.summaryFile,
-            }));
-          } catch { /* best effort */ }
-        }
-
         let systemPrompt: string;
         if (shouldUsePortraitPrompt) {
           const psForPrompt = portraitStatus && (portraitStatus.status === "running" || portraitStatus.status === "completed" || portraitStatus.status === "failed" || portraitStatus.status === "cancelled" || portraitStatus.status === "interrupted")
@@ -582,7 +566,6 @@ export function useStreamChat(opts: StreamChatOptions = {}) {
             } : null,
             connectedSources: connectedSources?.length ? connectedSources : effectiveSelectedSources,
             hasPortraitData,
-            previousSessions,
             turnCount,
           });
         }

@@ -68,76 +68,27 @@ pub fn execute_tool(
         }
 
         "read_session_files" => {
-            let sessions_dir = get_data_dir().join("sessions");
-            if !sessions_dir.exists() {
-                return Ok(json!({"files": [], "message": "No sessions directory found"}));
-            }
+            let sessions = sessions::list_sessions(conn)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|s| s.status == "completed" && s.kind == "conversation")
+                .collect::<Vec<_>>();
 
-            let pattern = sessions_dir.join("*.md");
-            let mut raw_files: Vec<(String, String)> = Vec::new();
-
-            if let Ok(entries) = glob::glob(pattern.to_str().unwrap_or("")) {
-                for entry in entries.flatten() {
-                    if let Ok(content) = fs::read_to_string(&entry) {
-                        let name = entry.file_name()
-                            .map(|n| n.to_string_lossy().to_string())
-                            .unwrap_or_default();
-                        raw_files.push((name, content));
-                    }
-                }
-            }
-
-            raw_files.sort_by(|a, b| a.0.cmp(&b.0));
-
-            let total = raw_files.len();
-            let recent_count = 5.min(total);
-            let older_boundary = total.saturating_sub(recent_count);
-
-            let mut timeline = String::from("SESSION TIMELINE (oldest → most recent):\n");
-            for (i, (path, content)) in raw_files.iter().enumerate() {
-                let title = content.lines()
-                    .find(|l| l.starts_with("# "))
-                    .map(|l| l.trim_start_matches("# ").to_string())
-                    .unwrap_or_else(|| path.clone());
-                let marker = if i >= older_boundary { " ★ RECENT" } else { "" };
-                timeline.push_str(&format!("  {}. {} — {}{}\n", i + 1, path, title, marker));
-            }
-            timeline.push_str(&format!(
-                "\nMOST RECENT SESSION: {}\n",
-                raw_files.last().map(|(p, _)| p.as_str()).unwrap_or("none")
-            ));
-            if total > recent_count {
-                timeline.push_str("★ RECENT = full content below. Older sessions are condensed.\n");
-            }
-
+            let total = sessions.len();
             let mut files: Vec<Value> = Vec::new();
-            files.push(json!({
-                "path": "_INDEX",
-                "content": timeline,
-            }));
 
-            for (i, (path, content)) in raw_files.iter().enumerate() {
-                if i >= older_boundary {
+            for s in &sessions {
+                let (_, summary) = sessions::load_session(conn, &s.id).unwrap_or((s.clone(), None));
+                if let Some(content) = summary {
                     files.push(json!({
-                        "path": path,
+                        "name": s.name,
+                        "date": s.created_at,
                         "content": content,
                     }));
-                } else {
-                    let truncated: String = content.chars().take(600).collect();
-                    let is_truncated = content.chars().count() > 600;
-                    let display = if is_truncated {
-                        format!("{}...\n\n[Condensed — use read_file(\"sessions/{}\") for full content]", truncated, path)
-                    } else {
-                        content.clone()
-                    };
-                    files.push(json!({
-                        "path": path,
-                        "content": display,
-                    }));
                 }
             }
 
-            Ok(json!({"count": total, "files": files}))
+            Ok(json!({"count": total, "sessions": files}))
         }
 
         "write_session_file" => {
@@ -154,22 +105,10 @@ pub fn execute_tool(
                 .as_str()
                 .unwrap_or("");
 
-            if session_id.is_empty() {
-                let sessions_dir = get_data_dir().join("sessions");
-                fs::create_dir_all(&sessions_dir)
-                    .map_err(|e| format!("Failed to create sessions dir: {}", e))?;
-                let file_path = sessions_dir.join(filename);
-                fs::write(&file_path, content)
-                    .map_err(|e| format!("Failed to write session file: {}", e))?;
-
-                sessions::complete_session("", title, filename, content).ok();
-
-                Ok(json!({"status": "ok", "path": file_path.display().to_string()}))
-            } else {
-                sessions::complete_session(session_id, title, filename, content)?;
-                let file_path = get_data_dir().join("sessions").join(filename);
-                Ok(json!({"status": "ok", "path": file_path.display().to_string()}))
-            }
+            let effective_id = if session_id.is_empty() { "" } else { session_id };
+            sessions::complete_session(conn, effective_id, title, filename, content)?;
+            let file_path = get_data_dir().join("sessions").join(filename);
+            Ok(json!({"status": "ok", "path": file_path.display().to_string()}))
         }
 
         "read_file" => {

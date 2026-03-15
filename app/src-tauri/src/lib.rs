@@ -73,6 +73,7 @@ pub fn run() {
     if let Some(ref conn) = db_conn {
         db::cleanup_stale_sync_runs(conn);
         db::cleanup_stale_portrait_runs(conn);
+        sessions::migrate_from_json(conn);
     }
     let db_state = db::DbState {
         conn: std::sync::Mutex::new(db_conn),

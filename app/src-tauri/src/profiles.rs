@@ -345,6 +345,8 @@ fn create_database(data_dir: &std::path::Path) -> Result<(), String> {
         .map_err(|e| format!("Failed to create corrections tables: {}", e))?;
     conn.execute_batch(PORTRAIT_TABLES)
         .map_err(|e| format!("Failed to create portrait tables: {}", e))?;
+    conn.execute_batch(SESSIONS_TABLES)
+        .map_err(|e| format!("Failed to create sessions tables: {}", e))?;
 
     Ok(())
 }
@@ -710,6 +712,23 @@ CREATE TABLE IF NOT EXISTS portrait_runs (
     extraction_months_covered TEXT,
     results_summary TEXT
 );
+";
+
+pub const SESSIONS_TABLES: &str = "
+CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'conversation',
+    status TEXT NOT NULL DEFAULT 'active',
+    summary_file TEXT,
+    summary TEXT,
+    chat_history TEXT DEFAULT '[]',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
+CREATE INDEX IF NOT EXISTS idx_sessions_kind ON sessions(kind);
+CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions(created_at);
 ";
 
 const CORRECTIONS_TABLES: &str = "
