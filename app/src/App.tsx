@@ -273,7 +273,6 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
     started_at?: string | null; updated_at?: string | null; finished_at?: string | null;
     extraction_months_covered?: string | null; results_summary?: string | null;
   } | null>(null);
-  const portraitCompleted = portraitStatus?.status === "completed";
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activeSessionId, setActiveSessionIdRaw] = useState<string | null>(null);
   const setActiveSessionId = useCallback((id: string | null) => {
