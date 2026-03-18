@@ -74,7 +74,7 @@ export function AgentResponse({ message }: AgentResponseProps) {
     lastBlock?.type === "tool_use" &&
     lastBlock.status === "complete";
 
-  const ACTION_TOOL_NAMES = ["restart_app", "open_icloud_settings", "open_finder_iphone"];
+  const ACTION_TOOL_NAMES = ["restart_app"];
 
   const isActionTool = (block: ContentBlock): block is ToolUseBlockType =>
     block.type === "tool_use" &&

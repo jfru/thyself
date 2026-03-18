@@ -9,7 +9,6 @@ import {
   ChevronRight,
   Loader2,
   RotateCcw,
-  ExternalLink,
 } from "lucide-react";
 import type { ToolUseBlock as ToolUseBlockType } from "../lib/types";
 
@@ -47,26 +46,32 @@ function getToolDescription(block: ToolUseBlockType): string {
       return `Listing ${(input.directory as string) || "files"}`;
     case "web_search":
       return `Searching: ${(input.query as string) || "web"}`;
-    case "scan_message_sources":
-      return "Scanning for message databases";
     case "open_full_disk_access":
       return "Opening Full Disk Access settings";
-    case "monitor_imessage_download":
-      return "Monitoring iMessage download";
-    case "check_iphone_connection":
-      return "Checking for connected iPhone";
-    case "find_iphone_backups":
-      return "Looking for iPhone backups";
-    case "monitor_iphone_backup":
-      return "Monitoring backup progress";
-    case "generate_backup_password":
-      return "Generating backup password";
-    case "extract_from_backup":
-      return "Extracting WhatsApp from backup";
-    case "import_messages": {
-      const source = (input.source as string) || "";
-      return source ? `Importing ${source} messages` : "Importing messages";
-    }
+    case "check_datarep":
+      return "Checking data connector";
+    case "setup_datarep":
+      return "Setting up data connector";
+    case "register_datarep_source":
+      return `Registering source: ${(input.name as string) || ""}`;
+    case "datarep_scan":
+      return "Scanning data sources";
+    case "datarep_import":
+      return `Importing from ${(input.source as string) || "source"}`;
+    case "datarep_reply":
+      return "Processing response";
+    case "datarep_stream":
+      return `Loading data from ${(input.source as string) || "source"}`;
+    case "datarep_auth":
+      return `Authenticating ${(input.source as string) || "source"}`;
+    case "add_data_source":
+      return `Adding source: ${(input.source_id as string) || ""}`;
+    case "restart_app":
+      return "Preparing restart";
+    case "open_url":
+      return "Opening URL";
+    case "start_portrait_build":
+      return "Building life portrait";
     default:
       return block.name;
   }
@@ -85,36 +90,6 @@ async function handleRestart() {
   }
 }
 
-async function handleOpenIcloudSettings() {
-  try {
-    if ("__TAURI_INTERNALS__" in window) {
-      const { invoke } = await import("@tauri-apps/api/core");
-      await invoke("cmd_open_icloud_settings");
-    } else {
-      await fetch("http://localhost:3001/api/cmd_open_icloud_settings", {
-        method: "POST",
-      });
-    }
-  } catch {
-    // best-effort
-  }
-}
-
-async function handleOpenFinderIphone() {
-  try {
-    if ("__TAURI_INTERNALS__" in window) {
-      const { invoke } = await import("@tauri-apps/api/core");
-      await invoke("cmd_open_finder_iphone");
-    } else {
-      await fetch("http://localhost:3001/api/cmd_open_finder_iphone", {
-        method: "POST",
-      });
-    }
-  } catch {
-    // best-effort
-  }
-}
-
 export function ToolUseBlock({ block }: ToolUseBlockProps) {
   const [expanded, setExpanded] = useState(false);
 
@@ -127,34 +102,6 @@ export function ToolUseBlock({ block }: ToolUseBlockProps) {
         >
           <RotateCcw size={15} />
           Restart Thyself
-        </button>
-      </div>
-    );
-  }
-
-  if (block.name === "open_icloud_settings" && block.status === "complete") {
-    return (
-      <div className="my-2">
-        <button
-          onClick={handleOpenIcloudSettings}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-zinc-700 hover:bg-zinc-600 text-white text-sm font-medium transition-colors"
-        >
-          <ExternalLink size={15} />
-          Open iCloud Settings
-        </button>
-      </div>
-    );
-  }
-
-  if (block.name === "open_finder_iphone" && block.status === "complete") {
-    return (
-      <div className="my-2">
-        <button
-          onClick={handleOpenFinderIphone}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-zinc-700 hover:bg-zinc-600 text-white text-sm font-medium transition-colors"
-        >
-          <ExternalLink size={15} />
-          Open Finder
         </button>
       </div>
     );

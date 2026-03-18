@@ -222,10 +222,8 @@ export function InputBox({
   }, []);
 
   useEffect(() => {
-    if (!isStreaming && editorRef.current) {
-      editorRef.current.focus();
-    }
-  }, [isStreaming]);
+    editorRef.current?.focus();
+  }, []);
 
   useEffect(() => {
     const el = editorRef.current;
@@ -317,11 +315,15 @@ export function InputBox({
 
   const handleSubmit = useCallback(() => {
     const el = editorRef.current;
-    if (!el || isStreaming) return;
+    if (!el) return;
 
     const { text, context, quoteText } = extractContentFromEditable(el);
     const trimmed = text.trim();
     if (!trimmed && images.length === 0 && fileAttachments.length === 0 && context.length === 0 && !quoteText) return;
+
+    if (isStreaming) {
+      onStop();
+    }
 
     let finalText = trimmed;
     if (quoteText) {
@@ -349,7 +351,7 @@ export function InputBox({
     mentionRangeRef.current = null;
     onClearQuote?.();
     autoResize();
-  }, [isStreaming, images, fileAttachments, onSend, onClearQuote, autoResize]);
+  }, [isStreaming, images, fileAttachments, onSend, onStop, onClearQuote, autoResize]);
 
   const handleInput = useCallback(() => {
     updateEditorState();
@@ -554,7 +556,6 @@ export function InputBox({
   };
 
   const handleAttachFiles = useCallback(async () => {
-    if (isStreaming) return;
     setShowAttachMenu(false);
     try {
       const { invokeCommand } = await import("../lib/tauriBridge");
@@ -567,10 +568,9 @@ export function InputBox({
     } catch (err) {
       console.error("File picker failed:", err);
     }
-  }, [isStreaming]);
+  }, []);
 
   const handleAttachFolder = useCallback(async () => {
-    if (isStreaming) return;
     setShowAttachMenu(false);
     try {
       const { invokeCommand } = await import("../lib/tauriBridge");
@@ -583,7 +583,7 @@ export function InputBox({
     } catch (err) {
       console.error("Folder picker failed:", err);
     }
-  }, [isStreaming]);
+  }, []);
 
   const showDragOverlay = isDragging || isTauriDragging;
   const hasPickerAttachments = images.length > 0 || fileAttachments.length > 0;
@@ -591,7 +591,7 @@ export function InputBox({
 
   return (
     <div
-      className="border-t border-zinc-800 bg-zinc-950 p-4"
+      className="relative z-10 border-t border-zinc-800 bg-zinc-950 p-4"
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
       onDragOver={handleDragOver}
@@ -660,8 +660,7 @@ export function InputBox({
             <div className="relative flex-shrink-0" data-attach-menu>
               <button
                 onClick={() => setShowAttachMenu((v) => !v)}
-                disabled={isStreaming}
-                className="rounded-lg p-1.5 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 disabled:opacity-30 transition-all"
+                className="rounded-lg p-1.5 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition-all"
                 title="Attach file"
               >
                 <Paperclip size={18} />
@@ -689,8 +688,7 @@ export function InputBox({
               <button
                 ref={emojiButtonRef}
                 onClick={() => { saveSelection(); setShowEmojiPicker(v => !v); }}
-                disabled={isStreaming}
-                className="rounded-lg p-1.5 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 disabled:opacity-30 transition-all"
+                className="rounded-lg p-1.5 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition-all"
                 title="Emoji"
               >
                 <Smile size={18} />
@@ -718,7 +716,7 @@ export function InputBox({
               )}
               <div
                 ref={editorRef}
-                contentEditable={!isStreaming}
+                contentEditable
                 onInput={handleInput}
                 onKeyDown={handleKeyDown}
                 onPaste={handlePaste}
@@ -729,7 +727,7 @@ export function InputBox({
                 className="min-h-[1.5em] max-h-[200px] overflow-y-auto resize-none bg-transparent text-zinc-100 outline-none text-sm leading-relaxed whitespace-pre-wrap break-words [&_[data-mention-type]]:inline-flex [&_[data-mention-type]]:items-center [&_[data-mention-type]]:gap-1 [&_[data-mention-type]]:rounded [&_[data-mention-type]]:bg-blue-500/20 [&_[data-mention-type]]:text-blue-300 [&_[data-mention-type]]:px-1.5 [&_[data-mention-type]]:py-0.5 [&_[data-mention-type]]:text-xs [&_[data-mention-type]]:font-medium [&_[data-mention-type]]:mx-0.5 [&_[data-mention-type]]:align-baseline [&_[data-mention-type]]:cursor-default [&_[data-mention-type]]:whitespace-nowrap [&_[data-quote-text]]:inline-flex [&_[data-quote-text]]:items-center [&_[data-quote-text]]:gap-1 [&_[data-quote-text]]:rounded [&_[data-quote-text]]:bg-purple-500/20 [&_[data-quote-text]]:text-purple-300 [&_[data-quote-text]]:px-1.5 [&_[data-quote-text]]:py-0.5 [&_[data-quote-text]]:text-xs [&_[data-quote-text]]:font-medium [&_[data-quote-text]]:mx-0.5 [&_[data-quote-text]]:align-baseline [&_[data-quote-text]]:cursor-default [&_[data-quote-text]]:whitespace-nowrap [&_[data-quote-text]]:max-w-[300px]"
               />
             </div>
-            {isStreaming ? (
+            {isStreaming && (
               <button
                 onClick={onStop}
                 className="flex-shrink-0 rounded-lg p-1.5 text-red-400 hover:text-red-300 hover:bg-zinc-800 transition-all"
@@ -737,19 +735,18 @@ export function InputBox({
               >
                 <Square size={18} fill="currentColor" />
               </button>
-            ) : (
-              <button
-                onClick={handleSubmit}
-                disabled={!canSend}
-                className="flex-shrink-0 rounded-lg p-1.5 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-zinc-400 transition-all"
-              >
-                <Send size={18} />
-              </button>
             )}
+            <button
+              onClick={handleSubmit}
+              disabled={!canSend}
+              className="flex-shrink-0 rounded-lg p-1.5 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-zinc-400 transition-all"
+            >
+              <Send size={18} />
+            </button>
           </div>
         </div>
         <div className="mt-1.5 text-center text-xs text-zinc-600">
-          {isStreaming ? "Esc to stop" : "Enter to send · @ to mention"}
+          {isStreaming ? "Enter to send · Esc to stop" : "Enter to send · @ to mention"}
         </div>
       </div>
 

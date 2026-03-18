@@ -696,7 +696,15 @@ pub async fn run_chat_loop(
             }));
 
             let mut tool_results: Vec<Value> = Vec::new();
+            let mut cancelled_mid_tools = false;
             for block in &content {
+                if let Some(ref flag) = cancel {
+                    if flag.load(Ordering::Relaxed) {
+                        cancelled_mid_tools = true;
+                        break;
+                    }
+                }
+
                 let block_type = block["type"].as_str().unwrap_or("");
                 if block_type == "tool_use" {
                     let tool_name = block["name"].as_str().unwrap_or("");
@@ -763,6 +771,11 @@ pub async fn run_chat_loop(
                         "is_error": is_error
                     }));
                 }
+            }
+
+            if cancelled_mid_tools {
+                emit_fn(&stream_id, "message_stop", &json!({}));
+                return Err("Cancelled by user".to_string());
             }
 
             if !tool_results.is_empty() {
@@ -1020,16 +1033,6 @@ pub fn share_session_pdf(state: State<'_, DbState>, session_id: String) -> Resul
     }
 
     crate::clipboard_mac::copy_file_to_clipboard(&pdf_path)
-}
-
-#[tauri::command]
-pub fn cmd_open_icloud_settings() {
-    onboarding_tools::perform_open_icloud_settings();
-}
-
-#[tauri::command]
-pub fn cmd_open_finder_iphone() {
-    onboarding_tools::perform_open_finder_iphone();
 }
 
 fn read_image_file(path: &str) -> Result<Value, String> {

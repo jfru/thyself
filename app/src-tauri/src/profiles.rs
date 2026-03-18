@@ -18,6 +18,8 @@ pub struct Profile {
     pub backup_password: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth_token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub datarep_api_key: Option<String>,
     #[serde(rename = "createdAt")]
     pub created_at: String,
 }
@@ -100,6 +102,7 @@ pub fn create_profile(
         onboarding_status: "pending".to_string(),
         backup_password: None,
         auth_token: None,
+        datarep_api_key: None,
         created_at: chrono::Utc::now().to_rfc3339(),
     };
 
@@ -161,6 +164,22 @@ pub fn update_profile(
     Ok(updated)
 }
 
+pub fn update_profile_add_source(profile_id: &str, source_id: &str) -> Result<Profile, String> {
+    let mut profiles = read_profiles()?;
+    let profile = profiles
+        .iter_mut()
+        .find(|p| p.id == profile_id)
+        .ok_or_else(|| format!("Profile not found: {}", profile_id))?;
+
+    if !profile.selected_sources.iter().any(|s| s == source_id) {
+        profile.selected_sources.push(source_id.to_string());
+    }
+
+    let updated = profile.clone();
+    write_profiles(&profiles)?;
+    Ok(updated)
+}
+
 pub fn set_backup_password(profile_id: &str, password: &str) -> Result<(), String> {
     let mut profiles = read_profiles()?;
     let profile = profiles
@@ -178,6 +197,31 @@ pub fn get_backup_password(profile_id: &str) -> Result<Option<String>, String> {
         .find(|p| p.id == profile_id)
         .ok_or_else(|| format!("Profile not found: {}", profile_id))?;
     Ok(profile.backup_password.clone())
+}
+
+pub fn set_datarep_api_key(profile_id: &str, key: &str) -> Result<(), String> {
+    let mut profiles = read_profiles()?;
+    let profile = profiles
+        .iter_mut()
+        .find(|p| p.id == profile_id)
+        .ok_or_else(|| format!("Profile not found: {}", profile_id))?;
+    profile.datarep_api_key = Some(key.to_string());
+    write_profiles(&profiles)
+}
+
+pub fn get_datarep_api_key() -> Option<String> {
+    if let Some(active_id) = get_active_profile_id() {
+        if let Ok(profiles) = read_profiles() {
+            if let Some(profile) = profiles.iter().find(|p| p.id == active_id) {
+                if let Some(ref key) = profile.datarep_api_key {
+                    if !key.is_empty() {
+                        return Some(key.clone());
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 pub fn delete_profile(profile_id: &str) -> Result<Option<Profile>, String> {
@@ -257,6 +301,7 @@ pub fn migrate_legacy_data() -> Result<bool, String> {
         onboarding_status: "complete".to_string(),
         backup_password: None,
         auth_token: None,
+        datarep_api_key: None,
         created_at: chrono::Utc::now().to_rfc3339(),
     };
 

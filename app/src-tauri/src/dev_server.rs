@@ -78,9 +78,6 @@ pub async fn start_dev_server() {
         .route("/api/cmd_remove_data_source", post(handle_remove_data_source))
         .route("/api/get_subject_name", get(handle_get_subject_name))
         .route("/api/validate_api_key", post(handle_validate_api_key))
-        .route("/api/cmd_open_icloud_settings", post(handle_open_icloud_settings))
-        .route("/api/cmd_open_finder_iphone", post(handle_open_finder_iphone))
-        .route("/api/import_chatgpt_export", post(handle_import_chatgpt_export))
         .route("/api/read_dropped_files", post(handle_read_dropped_files))
         .route("/api/pick_files", post(handle_pick_files))
         .route("/api/pick_folder", post(handle_pick_folder))
@@ -653,7 +650,7 @@ async fn handle_list_profiles() -> impl IntoResponse {
 struct CreateProfileReq {
     name: String,
     #[serde(rename = "apiKey")]
-    api_key: String,
+    api_key: Option<String>,
     #[serde(rename = "subjectName")]
     subject_name: String,
     email: Option<String>,
@@ -665,7 +662,7 @@ async fn handle_create_profile(
     AxumState(state): AxumState<Arc<AppState>>,
     Json(body): Json<CreateProfileReq>,
 ) -> impl IntoResponse {
-    match profiles::create_profile(body.name, Some(body.api_key), body.subject_name, body.email, body.selected_sources) {
+    match profiles::create_profile(body.name, body.api_key, body.subject_name, body.email, body.selected_sources) {
         Ok(profile) => {
             if let Ok(new_conn) = db::open_db_for_profile(&profile.data_dir) {
                 let mut guard = state.db.conn.lock().unwrap();
@@ -1017,34 +1014,6 @@ struct DebugLogReq {
 
 async fn handle_debug_log(Json(_body): Json<DebugLogReq>) -> impl IntoResponse {
     StatusCode::OK
-}
-
-async fn handle_open_icloud_settings() -> impl IntoResponse {
-    crate::onboarding_tools::perform_open_icloud_settings();
-    Json(json!({"status": "opened"}))
-}
-
-async fn handle_open_finder_iphone() -> impl IntoResponse {
-    crate::onboarding_tools::perform_open_finder_iphone();
-    Json(json!({"status": "opened"}))
-}
-
-#[derive(Deserialize)]
-struct ImportChatGptReq {
-    path: String,
-}
-
-async fn handle_import_chatgpt_export(
-    Json(body): Json<ImportChatGptReq>,
-) -> impl IntoResponse {
-    let input = json!({ "path": body.path });
-    match onboarding_tools::execute_onboarding_tool("import_chatgpt_export", &input).await {
-        Ok(result) => (StatusCode::OK, Json(result)),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": e })),
-        ),
-    }
 }
 
 #[derive(Deserialize)]

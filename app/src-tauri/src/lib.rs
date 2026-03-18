@@ -1,7 +1,9 @@
 mod claude;
 mod commands;
+mod datarep_client;
 mod db;
 mod dev_server;
+mod loader;
 mod onboarding_tools;
 mod clipboard_mac;
 mod pdf;
@@ -48,6 +50,10 @@ pub fn run_dev_server_only() {
     if let Err(e) = profiles::migrate_legacy_data() {
         eprintln!("Warning: legacy data migration failed: {}", e);
     }
+    if let Ok(Some(conn)) = db::open_db() {
+        sessions::migrate_from_json(&conn);
+        sessions::strip_legacy_system_messages(&conn);
+    }
     eprintln!("[dev-server-only] Starting on http://localhost:3001");
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(dev_server::start_dev_server());
@@ -76,6 +82,7 @@ pub fn run() {
         db::cleanup_stale_sync_runs(conn);
         db::cleanup_stale_portrait_runs(conn);
         sessions::migrate_from_json(conn);
+        sessions::strip_legacy_system_messages(conn);
         sessions::backfill_session_pdfs(conn);
     }
     let db_state = db::DbState {
@@ -129,8 +136,6 @@ pub fn run() {
             cmd_create_portal_session,
             cmd_perform_restart,
             share_session_pdf,
-            cmd_open_icloud_settings,
-            cmd_open_finder_iphone,
             cmd_debug_log,
             pick_and_read_images,
             pick_files,

@@ -18,6 +18,13 @@ interface LogEntry {
   timestamp: number;
 }
 
+interface ToolResultEntry {
+  name: string;
+  input: string;
+  result: string;
+  isError: boolean;
+}
+
 interface DiagnosticSnapshot {
   userName?: string;
   userEmail?: string;
@@ -32,6 +39,7 @@ interface DiagnosticSnapshot {
   userAgent: string;
   consoleLogs: LogEntry[];
   conversation: string[] | null;
+  toolResults?: ToolResultEntry[];
   sessionKind: string;
   timestamp: string;
 }
@@ -129,6 +137,19 @@ function formatLogs(logs: LogEntry[]): string {
     .join("\n");
 }
 
+function formatToolResults(results: ToolResultEntry[]): string {
+  if (!results || results.length === 0) return "";
+  const errorsFirst = [...results].sort((a, b) => (b.isError ? 1 : 0) - (a.isError ? 1 : 0));
+  return errorsFirst
+    .map((t) => {
+      const status = t.isError ? "ERROR" : "OK";
+      const inputPreview = t.input.length > 150 ? t.input.slice(0, 150) + "…" : t.input;
+      const resultPreview = t.result.length > 500 ? t.result.slice(0, 500) + "…" : t.result;
+      return `**\`${t.name}\`** [${status}]  \`${inputPreview}\`\n\`\`\`\n${resultPreview}\n\`\`\``;
+    })
+    .join("\n\n");
+}
+
 function formatConversation(lines: string[]): string {
   const recent = lines.slice(-20);
   if (lines.length > 20) {
@@ -161,6 +182,20 @@ function buildIssueBody(body: FeedbackRequest, screenshotUrl: string | null): st
     md += `\n### Screenshot\n![screenshot](${screenshotUrl})\n`;
   }
 
+  if (diag) {
+    const toolResults = diag.toolResults ?? [];
+    const failedTools = toolResults.filter((t) => t.isError);
+    if (failedTools.length > 0) {
+      md += "\n### Tool Errors\n\n" + formatToolResults(failedTools) + "\n";
+    }
+
+    const logs = diag.consoleLogs ?? [];
+    const errors = logs.filter((l) => l.level === "error");
+    if (errors.length > 0) {
+      md += "\n### Console Errors\n```\n" + formatLogs(errors) + "\n```\n";
+    }
+  }
+
   if (diag?.conversation && diag.conversation.length > 0) {
     md += "\n### Conversation\n\n";
     md += formatConversation(diag.conversation);
@@ -168,15 +203,15 @@ function buildIssueBody(body: FeedbackRequest, screenshotUrl: string | null): st
   }
 
   if (diag) {
-    const logs = diag.consoleLogs ?? [];
-    const errors = logs.filter((l) => l.level === "error");
-    if (errors.length > 0) {
-      md += "\n### Errors\n```\n" + formatLogs(errors) + "\n```\n";
-    }
-
     const collapsedParts: string[] = [];
 
-    if (logs.length > errors.length) {
+    const toolResults = diag.toolResults ?? [];
+    if (toolResults.length > 0) {
+      collapsedParts.push("**All Tool Results**\n\n" + formatToolResults(toolResults));
+    }
+
+    const logs = diag.consoleLogs ?? [];
+    if (logs.filter((l) => l.level === "warn").length > 0) {
       collapsedParts.push("**Warnings**\n```\n" + formatLogs(logs.filter((l) => l.level === "warn")) + "\n```");
     }
 
@@ -227,6 +262,11 @@ function buildDiagnosticBody(body: FeedbackRequest): string {
   md += "\n";
 
   if (diag) {
+    const toolResults = diag.toolResults ?? [];
+    if (toolResults.length > 0) {
+      md += "\n### Recent Tool Results\n\n" + formatToolResults(toolResults) + "\n";
+    }
+
     const collapsedParts: string[] = [];
 
     if (diag.conversation && diag.conversation.length > 0) {

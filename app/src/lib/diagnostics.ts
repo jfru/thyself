@@ -132,6 +132,13 @@ function serializeConversation(messages: Message[]): string[] {
 
 // --- Snapshot ---
 
+interface ToolResultEntry {
+  name: string;
+  input: string;
+  result: string;
+  isError: boolean;
+}
+
 export interface DiagnosticSnapshot {
   userName: string;
   userEmail: string;
@@ -143,6 +150,7 @@ export interface DiagnosticSnapshot {
   userAgent: string;
   consoleLogs: LogEntry[];
   conversation: string[] | null;
+  toolResults: ToolResultEntry[];
   sessionKind: string;
   timestamp: string;
 }
@@ -176,20 +184,29 @@ async function getSyncStatus(): Promise<Record<string, unknown> | null> {
 
 const WORKER_URL = "https://thyself-feedback.jfru.workers.dev";
 const EPISTEMIC_MARKER = "\n\nYou are the user";
-const _reportedTools = new Set<string>();
+const REMINDER_MARKER = "\n\n[Reminder: Present interpretations";
+const _reportedKeys = new Set<string>();
 
 export async function sendAutoDiagnostic(
   toolName: string,
   toolInput: string,
   errorContent: string,
 ): Promise<void> {
-  if (_reportedTools.has(toolName)) return;
-  _reportedTools.add(toolName);
+  let source = "";
+  try {
+    source = JSON.parse(toolInput).source || "";
+  } catch { /* not JSON */ }
+  const dedupKey = source ? `${toolName}:${source}` : toolName;
+  if (_reportedKeys.has(dedupKey)) return;
+  _reportedKeys.add(dedupKey);
 
   try {
     const diagnostics = await collectDiagnostics();
-    const markerIdx = errorContent.indexOf(EPISTEMIC_MARKER);
-    const cleanError = markerIdx > 0 ? errorContent.slice(0, markerIdx) : errorContent;
+    let cleanError = errorContent;
+    for (const marker of [EPISTEMIC_MARKER, REMINDER_MARKER]) {
+      const idx = cleanError.indexOf(marker);
+      if (idx > 0) cleanError = cleanError.slice(0, idx);
+    }
 
     await fetch(WORKER_URL, {
       method: "POST",
@@ -208,6 +225,25 @@ export async function sendAutoDiagnostic(
   } catch {
     // auto-diagnostics should never break the app
   }
+}
+
+function extractToolResults(): ToolResultEntry[] {
+  const entries: ToolResultEntry[] = [];
+  for (const msg of _chatMessages) {
+    if (msg.role !== "assistant") continue;
+    const am = msg as { blocks: Array<{ type: string; name?: string; inputJson?: string; result?: string; isError?: boolean }> };
+    for (const block of am.blocks) {
+      if (block.type === "tool_use" && block.result !== undefined) {
+        entries.push({
+          name: block.name || "",
+          input: (block.inputJson || "{}").slice(0, 500),
+          result: (block.result || "").slice(0, 2000),
+          isError: block.isError || false,
+        });
+      }
+    }
+  }
+  return entries.slice(-10);
 }
 
 export async function collectDiagnostics(): Promise<DiagnosticSnapshot> {
@@ -230,6 +266,7 @@ export async function collectDiagnostics(): Promise<DiagnosticSnapshot> {
     userAgent: navigator.userAgent,
     consoleLogs: getRecentLogs(),
     conversation,
+    toolResults: extractToolResults(),
     sessionKind: _sessionKind,
     timestamp: new Date().toISOString(),
   };

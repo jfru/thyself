@@ -1,4 +1,4 @@
-import { X, Mail, MessageCircle, MessageSquare, Smartphone } from "lucide-react";
+import { X } from "lucide-react";
 import type { SyncStatus, SyncRun } from "../lib/types";
 
 interface SyncHistoryModalProps {
@@ -6,14 +6,14 @@ interface SyncHistoryModalProps {
   onClose: () => void;
 }
 
-const SOURCE_META: Record<
-  string,
-  { label: string; icon: typeof Mail }
-> = {
-  gmail: { label: "Gmail", icon: Mail },
-  imessage: { label: "iMessage", icon: MessageCircle },
-  whatsapp_desktop: { label: "WhatsApp Desktop", icon: Smartphone },
-  whatsapp_web: { label: "WhatsApp Web", icon: MessageSquare },
+const SOURCE_META: Record<string, string> = {
+  gmail: "Gmail",
+  imessage: "iMessage",
+  whatsapp_desktop: "WhatsApp Desktop",
+  whatsapp_web: "WhatsApp Web",
+  chatgpt: "ChatGPT",
+  apple_mail: "Apple Mail",
+  apple_mail_v1: "Apple Mail",
 };
 
 function formatDate(iso: string | null): string {
@@ -71,47 +71,6 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-function SourceCard({ run }: { run: SyncRun | undefined; source: string }) {
-  if (!run) return null;
-  const meta = SOURCE_META[run.source] || {
-    label: run.source,
-    icon: MessageCircle,
-  };
-  const Icon = meta.icon;
-
-  const borderColor =
-    run.status === "completed"
-      ? "border-l-emerald-500"
-      : run.status === "failed"
-        ? "border-l-red-500"
-        : "border-l-zinc-600";
-
-  return (
-    <div
-      className={`bg-zinc-900 border border-zinc-800 border-l-2 ${borderColor} rounded-lg p-3 flex flex-col gap-1.5`}
-    >
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Icon size={14} className="text-zinc-400" />
-          <span className="text-sm font-medium text-zinc-200">
-            {meta.label}
-          </span>
-        </div>
-        <StatusBadge status={run.status} />
-      </div>
-      <div className="flex items-center gap-4 text-xs text-zinc-500">
-        <span>{formatDate(run.started_at)}</span>
-        <span>{run.messages_added} messages</span>
-      </div>
-      {run.status === "failed" && run.error_message && (
-        <p className="text-xs text-red-400/80 mt-0.5 truncate">
-          {run.error_message}
-        </p>
-      )}
-    </div>
-  );
-}
-
 export function SyncHistoryModal({ syncStatus, onClose }: SyncHistoryModalProps) {
   const { latest_by_source, history } = syncStatus;
 
@@ -122,26 +81,6 @@ export function SyncHistoryModal({ syncStatus, onClose }: SyncHistoryModalProps)
     }
     return best;
   }, null);
-
-  const sources = ["gmail", "imessage", "whatsapp_desktop", "whatsapp_web"];
-
-  // Group history by date
-  const grouped: { date: string; runs: SyncRun[] }[] = [];
-  const seen = new Set<string>();
-  for (const run of history) {
-    const dateKey = run.started_at
-      ? new Date(run.started_at + "Z").toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-          year: "numeric",
-        })
-      : "Unknown";
-    if (!seen.has(dateKey)) {
-      seen.add(dateKey);
-      grouped.push({ date: dateKey, runs: [] });
-    }
-    grouped[grouped.length - 1].runs.push(run);
-  }
 
   return (
     <div
@@ -175,23 +114,8 @@ export function SyncHistoryModal({ syncStatus, onClose }: SyncHistoryModalProps)
         </div>
 
         <div className="flex-1 overflow-y-auto">
-          {/* Source cards */}
-          <div className="px-5 py-3 grid grid-cols-2 gap-2">
-            {sources.map((s) => (
-              <SourceCard
-                key={s}
-                source={s}
-                run={latest_by_source[s]}
-              />
-            ))}
-          </div>
-
-          {/* History table */}
           {history.length > 0 && (
-            <div className="px-5 pb-4">
-              <h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">
-                Run History
-              </h3>
+            <div className="px-5 py-3">
               <div className="border border-zinc-800 rounded-lg overflow-hidden">
                 <table className="w-full text-xs">
                   <thead>
@@ -213,9 +137,7 @@ export function SyncHistoryModal({ syncStatus, onClose }: SyncHistoryModalProps)
                   </thead>
                   <tbody>
                     {history.map((run, i) => {
-                      const meta = SOURCE_META[run.source] || {
-                        label: run.source,
-                      };
+                      const label = SOURCE_META[run.source] || run.source;
                       return (
                         <tr
                           key={run.id ?? i}
@@ -228,7 +150,7 @@ export function SyncHistoryModal({ syncStatus, onClose }: SyncHistoryModalProps)
                             {formatDate(run.started_at)}
                           </td>
                           <td className="px-3 py-1.5 text-zinc-300">
-                            {meta.label}
+                            {label}
                           </td>
                           <td className="px-3 py-1.5 text-right text-zinc-400">
                             {run.messages_added}

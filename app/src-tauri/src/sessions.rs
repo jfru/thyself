@@ -261,6 +261,63 @@ pub fn migrate_from_json(conn: &Connection) {
     }
 }
 
+/// Strip legacy system messages from all persisted chat histories.
+/// System messages (role: "system") are UI-only CTAs injected at runtime;
+/// they should never be persisted. Old versions stored them, causing stale
+/// nudges like "You have X of Y data sources connected" to reappear.
+pub fn strip_legacy_system_messages(conn: &Connection) {
+    let rows: Vec<(String, String)> = {
+        let mut stmt = match conn.prepare(
+            "SELECT id, chat_history FROM sessions WHERE chat_history IS NOT NULL AND chat_history != '[]'",
+        ) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .ok()
+        .map(|r| r.filter_map(Result::ok).collect())
+        .unwrap_or_default()
+    };
+
+    let mut cleaned = 0;
+    for (id, history_str) in &rows {
+        let history: Value = match serde_json::from_str(history_str) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let arr = match history.as_array() {
+            Some(a) => a,
+            None => continue,
+        };
+
+        let filtered: Vec<&Value> = arr
+            .iter()
+            .filter(|m| m["role"].as_str() != Some("system"))
+            .collect();
+
+        if filtered.len() == arr.len() {
+            continue;
+        }
+
+        let new_json = serde_json::to_string(&filtered).unwrap_or_else(|_| "[]".into());
+        conn.execute(
+            "UPDATE sessions SET chat_history = ?1 WHERE id = ?2",
+            rusqlite::params![new_json, id],
+        )
+        .ok();
+        cleaned += 1;
+    }
+
+    if cleaned > 0 {
+        eprintln!(
+            "[migration] Stripped legacy system messages from {} session(s)",
+            cleaned
+        );
+    }
+}
+
 /// Generate PDFs for completed sessions that don't have one yet.
 pub fn backfill_session_pdfs(conn: &Connection) {
     let rows: Vec<(String, String, String)> = {

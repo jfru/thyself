@@ -6,7 +6,6 @@ import { SessionSidebar } from "./components/SessionSidebar";
 import { UpdateNotification } from "./components/UpdateNotification";
 import { OnboardingWelcome } from "./components/OnboardingWelcome";
 import { SubscriptionGate } from "./components/SubscriptionGate";
-import { DataSourceGrid } from "./components/DataSourceGrid";
 import { useStreamChat } from "./hooks/useStreamChat";
 import { invokeCommand } from "./lib/tauriBridge";
 import type { SessionMeta, Message, SystemMessage, Profile, ImageAttachment, FileAttachment, ContextAttachment, UserMessage as UserMessageType } from "./lib/types";
@@ -15,7 +14,6 @@ type AppPhase =
   | { kind: "loading" }
   | { kind: "onboarding-welcome" }
   | { kind: "subscription-gate"; name: string; email: string; authToken: string; profileId?: string }
-  | { kind: "onboarding-sources"; name: string; email: string; authToken: string }
   | { kind: "ready"; profile: Profile };
 
 function App() {
@@ -81,7 +79,7 @@ function App() {
         { authToken }
       );
       if (sub.subscription_status === "active") {
-        setPhase({ kind: "onboarding-sources", name, email, authToken });
+        await createProfileAndReady(name, email, authToken);
       } else {
         setPhase({ kind: "subscription-gate", name, email, authToken });
       }
@@ -90,22 +88,20 @@ function App() {
     }
   }
 
-  async function handleSourcesNext(selectedSources: string[]) {
-    if (phase.kind !== "onboarding-sources") return;
-
+  async function createProfileAndReady(name: string, email: string, authToken: string) {
     try {
       const profile = await invokeCommand<Profile>("cmd_create_profile", {
-        name: phase.name,
-        subjectName: phase.name,
-        email: phase.email,
-        selectedSources: selectedSources,
+        name,
+        subjectName: name,
+        email,
+        selectedSources: [],
       });
 
       await invokeCommand<Profile>("cmd_update_profile", {
         profileId: profile.id,
-        authToken: phase.authToken,
+        authToken,
       });
-      profile.auth_token = phase.authToken;
+      profile.auth_token = authToken;
 
       setPhase({ kind: "ready", profile });
     } catch (err) {
@@ -149,7 +145,7 @@ function App() {
     return (
       <SubscriptionGate
         authToken={phase.authToken}
-        onSubscribed={() => {
+        onSubscribed={async () => {
           if (phase.profileId) {
             // Returning user whose subscription renewed
             invokeCommand<{ profiles: Profile[]; activeProfileId: string | null }>("list_profiles")
@@ -161,16 +157,12 @@ function App() {
               })
               .catch(() => {});
           } else {
-            setPhase({ kind: "onboarding-sources", name: phase.name, email: phase.email, authToken: phase.authToken });
+            await createProfileAndReady(phase.name, phase.email, phase.authToken);
           }
         }}
         onBack={() => setPhase({ kind: "onboarding-welcome" })}
       />
     );
-  }
-
-  if (phase.kind === "onboarding-sources") {
-    return <DataSourceGrid onNext={handleSourcesNext} />;
   }
 
   return (
@@ -191,7 +183,6 @@ interface MainAppProps {
   onDeleteProfile: (profileId: string) => void;
 }
 
-const OPEN_SETUP_ACTION = "__OPEN_SETUP__";
 const OPEN_PORTRAIT_ACTION = "__OPEN_PORTRAIT__";
 const START_SESSION_ACTION = "__START_SESSION__";
 const WRAP_UP_SESSION_MESSAGE = "Let's wrap up. Please write a session summary of what we covered.";
@@ -201,8 +192,6 @@ const PRIVACY_SUBTITLE =
 const PRIVACY_LEARN_MORE =
   "When you use the app, relevant messages are sent to our AI provider for processing. They do not use your data for training and delete it within 30 days. We're working on zero-day deletion so nothing is kept at all.";
 
-const ALL_SOURCES = ["imessage", "whatsapp", "gmail", "chatgpt"];
-
 const SOURCE_SYNC_KEYS: Record<string, string[]> = {
   imessage: ["imessage"],
   whatsapp: ["whatsapp_desktop", "whatsapp_web"],
@@ -210,47 +199,38 @@ const SOURCE_SYNC_KEYS: Record<string, string[]> = {
   chatgpt: ["chatgpt"],
 };
 
-interface SourceConnectionStatus {
-  connected: string[];
-  missing: string[];
-  total: number;
-}
-
-async function getSourceConnectionStatus(sources: string[] = ALL_SOURCES): Promise<SourceConnectionStatus> {
-  const connected: string[] = [];
-  const missing: string[] = [];
+async function getConnectedSources(sources: string[]): Promise<string[]> {
   try {
     const status = await invokeCommand<{
       latest_by_source: Record<string, { status: string }>;
     }>("get_sync_status");
     const latest = status.latest_by_source ?? {};
-    for (const source of sources) {
+
+    const connected = sources.filter((source) => {
       const keys = SOURCE_SYNC_KEYS[source] ?? [source];
-      const isConnected = keys.some(
-        (k) => latest[k] && latest[k].status === "completed"
+      return keys.some((k) => latest[k] && latest[k].status === "completed");
+    });
+
+    // For sources without a direct sync_run match, check if there are
+    // unclaimed completed sync_runs (data imported under a different
+    // datarep source name, e.g. "apple_mail" for profile source "email_cantab").
+    const unmatched = sources.filter((s) => !connected.includes(s));
+    if (unmatched.length > 0) {
+      const claimedKeys = new Set(
+        sources.flatMap((s) => SOURCE_SYNC_KEYS[s] ?? [s])
       );
-      if (isConnected) {
-        connected.push(source);
-      } else {
-        missing.push(source);
+      const unclaimedCompleted = Object.entries(latest).filter(
+        ([k, v]) => !claimedKeys.has(k) && v.status === "completed"
+      );
+      if (unclaimedCompleted.length >= unmatched.length) {
+        connected.push(...unmatched);
       }
     }
-  } catch {
-    missing.push(...sources);
-  }
-  return { connected, missing, total: sources.length };
-}
 
-function makeSetupContinueMessage(): SystemMessage {
-  return {
-    role: "system",
-    text: "Ready to continue connecting your data?",
-    action: {
-      label: "Continue",
-      message: CONTINUE_SETUP_MESSAGE,
-    },
-    timestamp: Date.now(),
-  };
+    return connected;
+  } catch {
+    return [];
+  }
 }
 
 function makeSetupStartMessage(): SystemMessage {
@@ -261,54 +241,10 @@ function makeSetupStartMessage(): SystemMessage {
     learnMore: PRIVACY_LEARN_MORE,
     action: {
       label: "Get started",
-      message: "Let's get my message history set up.",
+      message: "Let's connect my data. Where should we start?",
     },
     timestamp: Date.now(),
   };
-}
-
-function makeSourceNudgeMessage(status: SourceConnectionStatus, opts?: { portraitCompleted?: boolean }): SystemMessage | null {
-  if (status.connected.length === 0) {
-    return {
-      role: "system",
-      text: "Connect your data sources to get started.",
-      action: {
-        label: "Connect Data",
-        message: OPEN_SETUP_ACTION,
-      },
-      timestamp: Date.now(),
-    };
-  }
-  if (status.missing.length === 0) {
-    if (opts?.portraitCompleted) {
-      return null;
-    }
-    return {
-      role: "system",
-      text: "All your data sources are connected! Ready to build your portrait?",
-      action: {
-        label: "Build Your Portrait",
-        message: OPEN_PORTRAIT_ACTION,
-      },
-      timestamp: Date.now(),
-    };
-  }
-  const base: SystemMessage = {
-    role: "system",
-    text: `You have ${status.connected.length} of ${status.total} data sources connected. Connecting more will give Thyself a richer understanding of your life.`,
-    action: {
-      label: "Connect more sources",
-      message: OPEN_SETUP_ACTION,
-    },
-    timestamp: Date.now(),
-  };
-  if (!opts?.portraitCompleted) {
-    base.secondaryAction = {
-      label: "Build Your Portrait",
-      message: OPEN_PORTRAIT_ACTION,
-    };
-  }
-  return base;
 }
 
 function makeNoDataMessage(
@@ -319,44 +255,9 @@ function makeNoDataMessage(
   }
   return {
     role: "system",
-    text: "Connect your data sources to get started.",
-    action: {
-      label: "Connect Data",
-      message: OPEN_SETUP_ACTION,
-    },
+    text: "Start a conversation to get to know yourself better.",
     timestamp: Date.now(),
   };
-}
-
-async function makeConversationNudgeMessage(sources?: string[], opts?: { portraitCompleted?: boolean }): Promise<SystemMessage | null> {
-  const status = await getSourceConnectionStatus(sources);
-  if (status.connected.length === 0) {
-    return {
-      role: "system",
-      text: "Connect your data sources to get started.",
-      action: {
-        label: "Connect Data",
-        message: OPEN_SETUP_ACTION,
-      },
-      timestamp: Date.now(),
-    };
-  }
-  return makeSourceNudgeMessage(status, opts);
-}
-
-function normalizeSetupMessages(messages: Message[]): Message[] {
-  return messages.map((msg) => {
-    if (msg.role !== "system") return msg;
-    if (!msg.action || msg.action.message !== OPEN_SETUP_ACTION) return msg;
-    return {
-      ...msg,
-      text: "Ready to continue connecting your data?",
-      action: {
-        label: "Continue",
-        message: CONTINUE_SETUP_MESSAGE,
-      },
-    };
-  });
 }
 
 const LAST_SESSION_KEY = "thyself_last_session_id";
@@ -373,7 +274,6 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
     extraction_months_covered?: string | null; results_summary?: string | null;
   } | null>(null);
   const portraitCompleted = portraitStatus?.status === "completed";
-  const nudgeOpts = { portraitCompleted };
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activeSessionId, setActiveSessionIdRaw] = useState<string | null>(null);
   const setActiveSessionId = useCallback((id: string | null) => {
@@ -411,6 +311,13 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
     }
   }, [refreshSidebar]);
 
+  const handleSourceAdded = useCallback((sourceId: string) => {
+    setSelectedSources((prev) => {
+      if (prev.includes(sourceId)) return prev;
+      return [...prev, sourceId];
+    });
+  }, []);
+
   const { messages, streamingSessionIds, sendMessage, stopStreaming, clearMessages, setMessages, switchToSession, getSessionMessages, isSessionStreaming } =
     useStreamChat({
       subjectName: profile.subject_name,
@@ -420,6 +327,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
       activeSessionKind,
       portraitStatus,
       onSessionCompleted: handleSessionCompleted,
+      onSourceAdded: handleSourceAdded,
     });
 
   const isStreamingHere = streamingSessionIds.has(activeSessionId ?? "");
@@ -455,6 +363,15 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
       }
     }
   }, [portraitStatus?.status, activeSessionKind, isStreamingHere, sendMessage]);
+
+  useEffect(() => {
+    if (activeSessionKind !== "setup") return;
+    const interval = setInterval(async () => {
+      const connected = await getConnectedSources(selectedSources);
+      setConnectedSources(connected);
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [activeSessionKind, selectedSources]);
 
   const hasImportedData = useCallback(async (): Promise<boolean> => {
     try {
@@ -495,7 +412,6 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
             const hasHistory =
               Array.isArray(session.chatHistory) && session.chatHistory.length > 0;
             if (hasHistory) {
-              const normalizedHistory = normalizeSetupMessages(session.chatHistory);
               const restartMsg: SystemMessage = {
                 role: "system",
                 text: "App restarted and ready to continue.",
@@ -505,20 +421,9 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
                 },
                 timestamp: Date.now(),
               };
-              switchToSession(session.id, [...normalizedHistory, restartMsg]);
+              switchToSession(session.id, [...session.chatHistory, restartMsg]);
             } else {
-              const welcomeMsg: SystemMessage = {
-                role: "system",
-                text: "Ready to connect your message history?",
-                subtitle: PRIVACY_SUBTITLE,
-                learnMore: PRIVACY_LEARN_MORE,
-                action: {
-                  label: "Let's go",
-                  message: "Let's get my message history set up.",
-                },
-                timestamp: Date.now(),
-              };
-              switchToSession(session.id, [welcomeMsg]);
+              switchToSession(session.id, [makeSetupStartMessage()]);
             }
             return;
           }
@@ -559,8 +464,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
             if (activeKind === "setup") {
               switchToSession(active.id, [makeNoDataMessage(activeKind)]);
             } else {
-              const nudge = await makeConversationNudgeMessage(selectedSources, nudgeOpts);
-              switchToSession(active.id, nudge ? [nudge] : []);
+              switchToSession(active.id, []);
             }
           } else {
             switchToSession(active.id, []);
@@ -577,8 +481,8 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
             setIsReadOnly(true);
           }
           {
-            const status = await getSourceConnectionStatus(selectedSources);
-            setConnectedSources(status.connected.filter(s => selectedSources.includes(s)));
+            const connected = await getConnectedSources(selectedSources);
+            setConnectedSources(connected);
           }
         }
       } catch (err) {
@@ -619,37 +523,9 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
       setSessionName(session.name);
 
       if (session.chatHistory && Array.isArray(session.chatHistory) && session.chatHistory.length > 0) {
-        const normalizedHistory = normalizeSetupMessages(session.chatHistory);
-        const last = normalizedHistory[normalizedHistory.length - 1] as Message | undefined;
-        const hasSystemCtaAsLast =
-          last &&
-          last.role === "system" &&
-          !!last.action;
-
-        if (hasSystemCtaAsLast) {
-          switchToSession(session.id, normalizedHistory);
-        } else {
-          const status = await getSourceConnectionStatus(selectedSources);
-          if (status.connected.length > 0) {
-            const nudge = makeSourceNudgeMessage(status, nudgeOpts);
-            switchToSession(session.id, nudge ? [...normalizedHistory, nudge] : normalizedHistory);
-          } else {
-            switchToSession(session.id, [...normalizedHistory, makeSetupContinueMessage()]);
-          }
-        }
+        switchToSession(session.id, session.chatHistory);
       } else {
-        const welcomeMsg: SystemMessage = {
-          role: "system",
-          text: "Ready to connect your message history?",
-          subtitle: PRIVACY_SUBTITLE,
-          learnMore: PRIVACY_LEARN_MORE,
-          action: {
-            label: "Let's go",
-            message: "Let's get my message history set up.",
-          },
-          timestamp: Date.now(),
-        };
-        switchToSession(session.id, [welcomeMsg]);
+        switchToSession(session.id, [makeSetupStartMessage()]);
       }
 
       const ro = session.status === "completed";
@@ -683,16 +559,11 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
       setActiveSessionKind("portrait");
       setSessionName(session.name);
 
-      const status = await getSourceConnectionStatus(selectedSources);
-      setConnectedSources(status.connected.filter(s => selectedSources.includes(s)));
+      const connected = await getConnectedSources(selectedSources);
+      setConnectedSources(connected);
 
       const hasHistory = session.chatHistory && Array.isArray(session.chatHistory) && session.chatHistory.length > 0;
-      if (hasHistory) {
-        switchToSession(session.id, session.chatHistory);
-      } else {
-        const nudge = await makeConversationNudgeMessage(selectedSources, nudgeOpts);
-        switchToSession(session.id, nudge ? [nudge] : []);
-      }
+      switchToSession(session.id, hasHistory ? session.chatHistory : []);
 
       const ro = session.status === "completed";
       sessionMetaCacheRef.current.set(session.id, { readOnly: ro, summary, name: session.name, kind: session.kind ?? "portrait" });
@@ -717,25 +588,6 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
       console.error("Failed to open portrait session:", err);
     }
   }, [refreshSidebar, selectedSources, switchToSession, portraitStatus?.status, sendMessage]);
-
-  const addSourceToProfile = useCallback(
-    async (sourceId: string): Promise<string[] | undefined> => {
-      if (selectedSources.includes(sourceId)) return selectedSources;
-      const nextSources = [...selectedSources, sourceId];
-      try {
-        await invokeCommand<Profile>("cmd_update_profile", {
-          profileId: profile.id,
-          selectedSources: nextSources,
-        });
-        setSelectedSources(nextSources);
-        return nextSources;
-      } catch (err) {
-        console.error("Failed to add source to profile:", err);
-        return undefined;
-      }
-    },
-    [profile.id, selectedSources]
-  );
 
   const removeSourceFromProfile = useCallback(
     async (sourceId: string) => {
@@ -765,11 +617,6 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
       options?: { selectedSourcesOverride?: string[]; context?: ContextAttachment[] },
       files?: FileAttachment[]
     ) => {
-      if (text === OPEN_SETUP_ACTION) {
-        await openSetupSession();
-        return;
-      }
-
       if (text === START_SESSION_ACTION) {
         try {
           const session = await invokeCommand<SessionMeta>("create_session", {
@@ -824,26 +671,6 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
           refreshSidebar();
         } catch (err) {
           console.error("Failed to create session:", err);
-        }
-      }
-
-      if (
-        profile.onboarding_status === "pending" &&
-        (kind ?? "conversation") === "conversation"
-      ) {
-        const status = await getSourceConnectionStatus(selectedSources);
-        if (status.connected.length === 0) {
-          const nudge = makeSourceNudgeMessage(status, nudgeOpts);
-          if (nudge) setMessages((prev) => [...prev, nudge]);
-          return;
-        }
-        if (status.missing.length > 0) {
-          const hasData = await hasImportedData();
-          if (!hasData) {
-            const nudge = makeSourceNudgeMessage(status, nudgeOpts);
-            if (nudge) setMessages((prev) => [...prev, nudge]);
-            return;
-          }
         }
       }
 
@@ -944,6 +771,8 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
 
       fetchPortraitStatus();
 
+      void getConnectedSources(selectedSources).then(setConnectedSources);
+
       if (id === activeSessionId) {
         refreshSidebar();
         void (async () => {
@@ -964,61 +793,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
         })();
       }
     }
-  }, [streamingSessionIds, activeSessionId, getSessionMessages, saveCurrentMessages, refreshSidebar, fetchPortraitStatus]);
-
-  // Delayed CTA for setup sessions: only append once streaming has truly
-  // stopped (stayed off for 3 s) to avoid premature CTAs between tool rounds.
-  const ctaTimerRef = useRef<number | null>(null);
-  useEffect(() => {
-    if (isStreamingHere || activeSessionKind !== "setup") {
-      if (ctaTimerRef.current !== null) {
-        window.clearTimeout(ctaTimerRef.current);
-        ctaTimerRef.current = null;
-      }
-      return;
-    }
-
-    ctaTimerRef.current = window.setTimeout(async () => {
-      ctaTimerRef.current = null;
-      try {
-        const status = await getSourceConnectionStatus(selectedSources);
-        if (status.connected.length > 0) {
-          try {
-            await invokeCommand<SessionMeta>("create_session", {
-              name: "Build Your Portrait",
-              kind: "portrait",
-            });
-          } catch { /* already exists */ }
-          try {
-            await invokeCommand<SessionMeta>("create_session", {
-              kind: "conversation",
-            });
-          } catch { /* already exists */ }
-          refreshSidebar();
-
-          const nudge = makeSourceNudgeMessage(status, nudgeOpts);
-          if (nudge) {
-            setMessages((prev) => {
-              const last = prev[prev.length - 1];
-              if (last?.role === "system" && !!(last as SystemMessage).action) {
-                return [...prev.slice(0, -1), nudge];
-              }
-              return [...prev, nudge];
-            });
-          }
-        }
-      } catch {
-        // best effort
-      }
-    }, 3000);
-
-    return () => {
-      if (ctaTimerRef.current !== null) {
-        window.clearTimeout(ctaTimerRef.current);
-        ctaTimerRef.current = null;
-      }
-    };
-  }, [isStreamingHere, activeSessionKind, selectedSources, refreshSidebar, setMessages]);
+  }, [streamingSessionIds, activeSessionId, getSessionMessages, saveCurrentMessages, refreshSidebar, fetchPortraitStatus, selectedSources]);
 
   // Show a "Wrap up" button after enough conversation turns.
   // Only shown once per session — tracks the last turn count it fired on
@@ -1123,9 +898,6 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
     if (profile.onboarding_status === "pending") {
       if (activeSessionKind === "setup") {
         setMessages([makeNoDataMessage(activeSessionKind)]);
-      } else {
-        const nudge = await makeConversationNudgeMessage(selectedSources, nudgeOpts);
-        if (nudge) setMessages([nudge]);
       }
     }
   }, [clearMessages, activeSessionId, activeSessionKind, profile.onboarding_status, selectedSources, saveCurrentMessages, setMessages]);
@@ -1182,39 +954,14 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
           return;
         }
 
-        // First load — populate messages from backend.
         if (session.chatHistory && Array.isArray(session.chatHistory) && session.chatHistory.length > 0) {
-          const loadedKind = (session.kind ?? "conversation") as "conversation" | "setup" | "portrait";
-          const normalized = loadedKind === "setup"
-            ? normalizeSetupMessages(session.chatHistory)
-            : session.chatHistory;
-
-          if (loadedKind === "setup") {
-            const last = normalized[normalized.length - 1] as Message | undefined;
-            const hasSystemCtaAsLast = last && last.role === "system" && !!last.action;
-            if (hasSystemCtaAsLast || isSessionStreaming(session.id)) {
-              switchToSession(session.id, normalized);
-            } else {
-              const status = await getSourceConnectionStatus(selectedSources);
-              if (isStale()) return;
-              if (status.connected.length > 0) {
-                const nudge = makeSourceNudgeMessage(status, nudgeOpts);
-                switchToSession(session.id, nudge ? [...normalized, nudge] : normalized);
-              } else {
-                switchToSession(session.id, [...normalized, makeSetupContinueMessage()]);
-              }
-            }
-          } else {
-            switchToSession(session.id, normalized);
-          }
+          switchToSession(session.id, session.chatHistory);
         } else if (profile.onboarding_status === "pending") {
           const loadedKind = (session.kind ?? "conversation") as "conversation" | "setup" | "portrait";
           if (loadedKind === "setup") {
             switchToSession(session.id, [makeNoDataMessage(loadedKind)]);
           } else {
-            const nudge = await makeConversationNudgeMessage(selectedSources, nudgeOpts);
-            if (isStale()) return;
-            switchToSession(session.id, nudge ? [nudge] : []);
+            switchToSession(session.id, []);
           }
         } else {
           switchToSession(session.id, []);
@@ -1267,7 +1014,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
           activeSessionKind={activeSessionKind}
           selectedSources={selectedSources}
           connectedSources={connectedSources}
-          onAddSource={addSourceToProfile}
+          onAddSourceMessage={() => handleSend("I want to add a new data source.")}
           onRequestSourceSetup={requestSourceSetup}
           onRemoveSource={removeSourceFromProfile}
           portraitStatus={portraitStatus as any}

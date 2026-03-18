@@ -111,6 +111,7 @@ export interface StreamChatOptions {
   activeSessionKind?: "conversation" | "setup" | "portrait" | null;
   portraitStatus?: { status: string; phase?: string; results_summary?: string | null } | null;
   onSessionCompleted?: (sessionId: string) => void;
+  onSourceAdded?: (sourceId: string) => void;
 }
 
 interface SendMessageOptions {
@@ -420,19 +421,13 @@ export function useStreamChat(opts: StreamChatOptions = {}) {
 
             if (isError) {
               sendAutoDiagnostic(toolName, toolInput, resultContent);
-            } else if (toolName === "import_messages" || toolName === "import_chatgpt_export") {
+            } else if (toolName === "add_data_source") {
               try {
-                const r = JSON.parse(resultContent);
-                const added = r.messages_added ?? r.messages_imported ?? null;
-                const method = r.method ?? "";
-                if (method === "initial_sync" && typeof added === "number" && added < 100) {
-                  sendAutoDiagnostic(
-                    toolName,
-                    toolInput,
-                    `${method} completed but only added ${added} messages (expected thousands)`,
-                  );
+                const r = JSON.parse(cleanToolResult(resultContent));
+                if (r.source_id) {
+                  optsRef.current.onSourceAdded?.(r.source_id);
                 }
-              } catch { /* not JSON, skip anomaly check */ }
+              } catch { /* ignore */ }
             }
 
             break;
@@ -567,7 +562,6 @@ export function useStreamChat(opts: StreamChatOptions = {}) {
           options?.selectedSourcesOverride ?? selectedSources ?? [];
         const shouldUseOnboardingPrompt =
           onboardingStatus === "pending" &&
-          effectiveSelectedSources.length > 0 &&
           effectiveSessionKind === "setup";
         const shouldUsePortraitPrompt = effectiveSessionKind === "portrait";
 

@@ -24,7 +24,7 @@ interface ChatViewProps {
   activeSessionKind?: "conversation" | "setup" | "portrait" | null;
   selectedSources?: string[];
   connectedSources?: string[];
-  onAddSource?: (sourceId: string) => void | Promise<void | string[]>;
+  onAddSourceMessage?: () => void;
   onRequestSourceSetup?: (
     sourceId: string,
     selectedSourcesOverride?: string[]
@@ -48,7 +48,7 @@ export function ChatView({
   activeSessionKind,
   selectedSources = [],
   connectedSources,
-  onAddSource,
+  onAddSourceMessage,
   onRequestSourceSetup,
   onRemoveSource,
   portraitStatus,
@@ -206,7 +206,7 @@ export function ChatView({
   const showClearButton = onClear && messages.length > 0 && !isReadOnly;
 
   return (
-    <div className="flex flex-1 flex-col min-h-0">
+    <div className="flex flex-1 flex-col min-h-0 overflow-hidden">
       <div className="flex items-center justify-between px-4 pt-2 pb-1 border-b border-zinc-800/50 bg-zinc-950">
         <SyncStatusIndicator />
         <div className="flex items-center gap-2">
@@ -248,7 +248,7 @@ export function ChatView({
         <SetupSourcesStatusPanel
           selectedSources={selectedSources}
           connectedSources={connectedSources}
-          onAddSource={onAddSource}
+          onAddSourceMessage={onAddSourceMessage}
           onRequestSourceSetup={onRequestSourceSetup}
           onRemoveSource={onRemoveSource}
         />
@@ -259,7 +259,7 @@ export function ChatView({
           onRefresh={onPortraitRefresh ?? (() => {})}
         />
       )}
-      <div ref={containerRef} className="flex-1 overflow-y-auto relative">
+      <div ref={containerRef} className="flex-1 min-h-0 overflow-y-auto relative">
         <MessageList messages={messages} isStreaming={isStreaming} onAction={onSend} onEditMessage={onEditMessage} isReadOnly={isReadOnly} />
         {replyPill && (
           <button
@@ -284,7 +284,7 @@ export function ChatView({
         </div>
       )}
       {isReadOnly ? (
-        <div className="border-t border-zinc-800 px-4 py-3 text-center text-xs text-zinc-600">
+        <div className="relative z-10 border-t border-zinc-800 bg-zinc-950 px-4 py-3 text-center text-xs text-zinc-600">
           This session has ended. Start a new session to continue chatting.
         </div>
       ) : (

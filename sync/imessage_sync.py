@@ -9,7 +9,9 @@ Requires Full Disk Access for the running process.
 
 import os
 import re
+import shutil
 import sqlite3
+import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -38,6 +40,36 @@ def apple_ns_to_seconds(ns):
     if ns is None or ns == 0:
         return 0
     return ns / NANOSECONDS
+
+
+def extract_text_from_attributed_body(blob):
+    """Extract plain text from iMessage attributedBody (NSTypedStream) blob.
+
+    On modern macOS, the `text` column is often NULL and the actual message
+    content lives in `attributedBody` as an NSKeyedArchiver-encoded
+    NSAttributedString. The raw text follows the \\x01+ marker with a
+    variable-length integer prefix.
+    """
+    if not blob:
+        return None
+    try:
+        marker = b'\x01+'
+        idx = blob.find(marker)
+        if idx < 0:
+            return None
+        idx += len(marker)
+        length = blob[idx]
+        idx += 1
+        if length == 0x81:
+            length = int.from_bytes(blob[idx:idx+2], 'big')
+            idx += 2
+        elif length == 0x82:
+            length = int.from_bytes(blob[idx:idx+3], 'big')
+            idx += 3
+        text_bytes = blob[idx:idx + length]
+        return text_bytes.decode('utf-8', errors='ignore').strip() or None
+    except (IndexError, ValueError):
+        return None
 
 
 def normalize_phone(phone):
@@ -108,9 +140,38 @@ def sync(thyself_db_path=None, initial_sync=False):
     thyself = sqlite3.connect(db_path)
     thyself.execute("PRAGMA journal_mode=WAL")
 
+    # Copy chat.db to a temp file to bypass macOS TCC/FDA restrictions.
+    # The Thyself app has FDA but python3 may not — opening the original
+    # file directly can silently return empty results on macOS.
+    tmp_db = os.path.join(tempfile.gettempdir(), "thyself_chat.db")
+    for suffix in ("", "-wal", "-shm"):
+        try:
+            os.remove(tmp_db + suffix)
+        except FileNotFoundError:
+            pass
     try:
-        imsg = sqlite3.connect(f"file:{IMESSAGE_DB}?mode=ro", uri=True)
-        imsg.execute("SELECT count(*) FROM message LIMIT 1")
+        shutil.copy2(IMESSAGE_DB, tmp_db)
+    except PermissionError:
+        # Fallback: try cp command (may have different TCC permissions)
+        import subprocess
+        result = subprocess.run(["cp", IMESSAGE_DB, tmp_db], capture_output=True)
+        if result.returncode != 0:
+            python_bin = sys.executable
+            raise PermissionError(
+                f"Full Disk Access required. Grant FDA to: {python_bin}\n"
+                "System Settings → Privacy & Security → Full Disk Access → add the Python binary"
+            )
+
+    try:
+        imsg = sqlite3.connect(tmp_db)
+        imsg.execute("PRAGMA query_only = ON")
+        msg_count = imsg.execute("SELECT count(*) FROM message").fetchone()[0]
+        print(f"  iMessage: opened database copy, {msg_count:,} messages available")
+        if msg_count == 0:
+            raise PermissionError(
+                "iMessage database opened but contains 0 messages — likely a TCC/FDA issue. "
+                f"Grant Full Disk Access to: {sys.executable}"
+            )
     except sqlite3.DatabaseError as e:
         if "authorization" in str(e).lower():
             python_bin = sys.executable
@@ -155,28 +216,21 @@ def sync(thyself_db_path=None, initial_sync=False):
     for chat_id, message_id in rows:
         chat_msg_map[message_id] = chat_id
 
-    messages = imsg.execute(
-        """
-        SELECT ROWID, guid, text, handle_id, is_from_me, date, date_read, service
-        FROM message
-        WHERE date >= ? AND text IS NOT NULL AND text != ''
-        ORDER BY date
-        """,
-        (cutoff_ns,),
-    ).fetchall()
-
     added = 0
+    skipped_empty = 0
     last_message_at = None
 
-    for rowid, guid, text, handle_id, is_from_me, date_ns, date_read_ns, service in messages:
-        source_id = f"imsg_{guid}"
+    def _insert_message(rowid, guid, text, handle_id, is_from_me, date_ns, date_read_ns):
+        """Insert a single message. Returns True if added."""
+        nonlocal added, last_message_at
 
+        source_id = f"imsg_{guid}"
         existing = thyself.execute(
             "SELECT 1 FROM messages WHERE source_id = ? AND source = 'imessage'",
             (source_id,),
         ).fetchone()
         if existing:
-            continue
+            return False
 
         contact_id = None
         if not is_from_me and handle_id and handle_id in handle_cache:
@@ -218,10 +272,46 @@ def sync(thyself_db_path=None, initial_sync=False):
         if added % 5000 == 0:
             thyself.commit()
             print(f"  iMessage: {added:,} messages inserted...")
+        return True
+
+    # Pass 1: messages with text column populated (fast, no blob loading)
+    for row in imsg.execute(
+        """SELECT ROWID, guid, text, handle_id, is_from_me, date, date_read
+           FROM message
+           WHERE date >= ? AND text IS NOT NULL AND text != ''
+           ORDER BY date""",
+        (cutoff_ns,),
+    ):
+        _insert_message(*row)
+
+    pass1_count = added
+    print(f"  iMessage: pass 1 done — {pass1_count:,} messages with text column")
+
+    # Pass 2: extract text from attributedBody for messages where text is NULL
+    for rowid, guid, handle_id, is_from_me, date_ns, date_read_ns, attr_body in imsg.execute(
+        """SELECT ROWID, guid, handle_id, is_from_me, date, date_read, attributedBody
+           FROM message
+           WHERE date >= ? AND (text IS NULL OR text = '') AND attributedBody IS NOT NULL
+           ORDER BY date""",
+        (cutoff_ns,),
+    ):
+        text = extract_text_from_attributed_body(attr_body)
+        if not text:
+            skipped_empty += 1
+            continue
+        _insert_message(rowid, guid, text, handle_id, is_from_me, date_ns, date_read_ns)
 
     thyself.commit()
     imsg.close()
     thyself.close()
+    print(f"  iMessage: {added:,} added, {skipped_empty:,} skipped (no text content)")
+
+    # Clean up temp copy
+    for suffix in ("", "-wal", "-shm"):
+        try:
+            os.remove(tmp_db + suffix)
+        except FileNotFoundError:
+            pass
 
     return added, last_message_at
 
