@@ -5,10 +5,15 @@ use crate::profiles;
 use crate::sessions;
 use crate::tools::{execute_tool, get_tool_definitions};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::fs;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
+
+pub struct ActiveStreams {
+    pub streams: std::sync::Mutex<HashMap<String, Arc<AtomicBool>>>,
+}
 
 #[tauri::command]
 pub async fn query_db(
@@ -661,6 +666,7 @@ pub async fn run_chat_loop(
             &system_prompt,
             tool_defs.clone(),
             &stream_id,
+            &cancel,
         )
         .await?;
 
@@ -854,11 +860,18 @@ pub async fn run_chat_loop(
 pub async fn stream_chat(
     app: AppHandle,
     state: State<'_, DbState>,
+    active_streams: State<'_, ActiveStreams>,
     messages: Vec<Value>,
     system_prompt: String,
     tools: Vec<Value>,
     stream_id: String,
 ) -> Result<Value, String> {
+    let cancel_flag = Arc::new(AtomicBool::new(false));
+    active_streams.streams.lock().unwrap()
+        .insert(stream_id.clone(), cancel_flag.clone());
+
+    let cleanup_id = stream_id.clone();
+
     let emit_fn = move |sid: &str, etype: &str, data: &Value| {
         let event = StreamEvent {
             event_type: etype.to_string(),
@@ -867,7 +880,25 @@ pub async fn stream_chat(
         let _ = app.emit(&format!("stream-event-{}", sid), event);
     };
 
-    run_chat_loop(&emit_fn, &state, messages, system_prompt, tools, stream_id, None).await
+    let result = run_chat_loop(&emit_fn, &state, messages, system_prompt, tools, stream_id, Some(cancel_flag)).await;
+
+    active_streams.streams.lock().unwrap().remove(&cleanup_id);
+
+    result
+}
+
+#[tauri::command]
+pub async fn stop_chat(
+    active_streams: State<'_, ActiveStreams>,
+    stream_id: String,
+) -> Result<Value, String> {
+    let streams = active_streams.streams.lock().unwrap();
+    if let Some(flag) = streams.get(&stream_id) {
+        flag.store(true, Ordering::Relaxed);
+        Ok(json!({"status": "stopped"}))
+    } else {
+        Err("Stream not found".to_string())
+    }
 }
 
 #[tauri::command]

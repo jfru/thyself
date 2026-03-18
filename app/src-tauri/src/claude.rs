@@ -2,6 +2,8 @@ use futures::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 const PROXY_API_URL: &str = "https://thyself-api.jfru.workers.dev/v1/messages";
 const DIRECT_API_URL: &str = "https://api.anthropic.com/v1/messages";
@@ -23,6 +25,7 @@ pub async fn stream_chat_request(
     system_prompt: &str,
     tools: Vec<Value>,
     stream_id: &str,
+    cancel: &Option<Arc<AtomicBool>>,
 ) -> Result<Value, String> {
     let client = Client::new();
     let model = std::env::var("THYSELF_CHAT_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string());
@@ -77,6 +80,12 @@ pub async fn stream_chat_request(
     let mut tool_input_buffers: Vec<String> = Vec::new();
 
     while let Some(chunk) = stream.next().await {
+        if let Some(ref flag) = cancel {
+            if flag.load(Ordering::Relaxed) {
+                return Ok(full_response);
+            }
+        }
+
         let chunk = chunk.map_err(|e| format!("Stream error: {}", e))?;
         let text = String::from_utf8_lossy(&chunk);
         buffer.push_str(&text);

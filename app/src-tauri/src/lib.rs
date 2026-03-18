@@ -89,11 +89,16 @@ pub fn run() {
         conn: std::sync::Mutex::new(db_conn),
     };
 
+    let active_streams = commands::ActiveStreams {
+        streams: std::sync::Mutex::new(std::collections::HashMap::new()),
+    };
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(db_state)
+        .manage(active_streams)
         .setup(|app| {
             use tauri::Manager;
             if let Some(win) = app.get_webview_window("main") {
@@ -112,6 +117,7 @@ pub fn run() {
             write_file,
             list_files,
             stream_chat,
+            stop_chat,
             get_data_dir_path,
             get_tool_defs,
             create_session,

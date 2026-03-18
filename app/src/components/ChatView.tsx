@@ -32,7 +32,7 @@ interface ChatViewProps {
   onRemoveSource?: (sourceId: string) => void | Promise<void>;
   portraitStatus?: PortraitRunStatus | null;
   onPortraitRefresh?: () => void;
-  onEditMessage?: (index: number, newContent: string) => void;
+  onEditMessage?: (index: number, newContent: string, images?: ImageAttachment[], files?: FileAttachment[]) => void;
 }
 
 export function ChatView({

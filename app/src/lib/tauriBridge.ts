@@ -202,7 +202,12 @@ export async function streamChat(
  */
 export async function stopChat(streamId: string): Promise<void> {
   if (isTauri()) {
-    // TODO: implement Tauri-side cancellation
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("stop_chat", { streamId });
+    } catch {
+      // best-effort
+    }
     return;
   }
 

@@ -126,6 +126,7 @@ interface StreamContext {
   indexMap: Map<number, number>;
   streamId: string;
   unlisten: (() => void) | null;
+  stopped: boolean;
 }
 
 export function useStreamChat(opts: StreamChatOptions = {}) {
@@ -231,6 +232,7 @@ export function useStreamChat(opts: StreamChatOptions = {}) {
         indexMap: new Map(),
         streamId: `chat-${Date.now()}`,
         unlisten: null,
+        stopped: false,
       };
       streamContextsRef.current.set(targetSessionId, ctx);
 
@@ -264,6 +266,7 @@ export function useStreamChat(opts: StreamChatOptions = {}) {
         ctx.indexMap.get(claudeIdx) ?? claudeIdx;
 
       const handleEvent = (payload: StreamEventPayload) => {
+        if (ctx.stopped) return;
         const { event_type, data } = payload;
 
         switch (event_type) {
@@ -624,13 +627,15 @@ export function useStreamChat(opts: StreamChatOptions = {}) {
   );
 
   const stopStreaming = useCallback((sessionId?: string) => {
-    const targetId = sessionId ?? activeSessionIdRef.current;
+    const targetId = (typeof sessionId === "string" ? sessionId : undefined) ?? activeSessionIdRef.current;
     if (!targetId) return;
     if (!streamingIdsRef.current.has(targetId)) return;
 
     const ctx = streamContextsRef.current.get(targetId);
-    if (!ctx) return;
+    if (!ctx) { console.log("[stopStreaming] BAIL: no ctx"); return; }
 
+    console.log("[stopStreaming] proceeding — streamId:", ctx.streamId, "hasUnlisten:", !!ctx.unlisten);
+    ctx.stopped = true;
     stopChat(ctx.streamId);
 
     if (ctx.unlisten) {

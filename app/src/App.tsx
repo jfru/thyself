@@ -713,7 +713,7 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
   );
 
   const handleEditMessage = useCallback(
-    async (index: number, newContent: string) => {
+    async (index: number, newContent: string, editedImages?: ImageAttachment[], editedFiles?: FileAttachment[]) => {
       if (isReadOnly) return;
 
       if (isStreamingHere) {
@@ -726,10 +726,15 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
 
       setMessages(messages.slice(0, index));
 
-      await sendMessage(newContent, um.images, {
-        sessionKind: activeSessionKind ?? "conversation",
-        context: um.context,
-      }, um.files);
+      await sendMessage(
+        newContent,
+        editedImages ?? um.images,
+        {
+          sessionKind: activeSessionKind ?? "conversation",
+          context: um.context,
+        },
+        editedFiles ?? um.files,
+      );
     },
     [isReadOnly, isStreamingHere, messages, stopStreaming, setMessages, sendMessage, activeSessionKind]
   );

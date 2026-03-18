@@ -5,6 +5,8 @@ import type {
   UserMessage as UserMessageType,
   AssistantMessage,
   SystemMessage,
+  ImageAttachment,
+  FileAttachment,
 } from "../lib/types";
 import { UserMessage } from "./UserMessage";
 import { AgentResponse } from "./AgentResponse";
@@ -13,7 +15,7 @@ interface MessageListProps {
   messages: Message[];
   isStreaming?: boolean;
   onAction?: (message: string) => void;
-  onEditMessage?: (index: number, newContent: string) => void;
+  onEditMessage?: (index: number, newContent: string, images?: ImageAttachment[], files?: FileAttachment[]) => void;
   isReadOnly?: boolean;
 }
 
@@ -130,7 +132,7 @@ export function MessageList({ messages, isStreaming, onAction, onEditMessage, is
               context={um.context}
               timestamp={um.timestamp}
               isEditable={!isReadOnly}
-              onEdit={onEditMessage ? (newContent) => onEditMessage(i, newContent) : undefined}
+              onEdit={onEditMessage ? (newContent, images, files) => onEditMessage(i, newContent, images, files) : undefined}
             />
           );
         }

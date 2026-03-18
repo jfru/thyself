@@ -729,7 +729,7 @@ export function InputBox({
             </div>
             {isStreaming && (
               <button
-                onClick={onStop}
+                onClick={() => onStop()}
                 className="flex-shrink-0 rounded-lg p-1.5 text-red-400 hover:text-red-300 hover:bg-zinc-800 transition-all"
                 title="Stop generating (Esc)"
               >
