@@ -184,8 +184,9 @@ export function useStreamChat(opts: StreamChatOptions = {}) {
       return;
     }
     if (msgs !== undefined) {
-      sessionMessagesRef.current.set(sessionId, msgs);
-      setMessagesRaw(msgs);
+      const cleaned = msgs.filter((m) => m.role !== "system");
+      sessionMessagesRef.current.set(sessionId, cleaned);
+      setMessagesRaw(cleaned);
     } else {
       const cached = sessionMessagesRef.current.get(sessionId) ?? [];
       setMessagesRaw(cached);
