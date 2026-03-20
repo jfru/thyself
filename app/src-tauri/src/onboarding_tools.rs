@@ -364,7 +364,7 @@ async fn auto_start_datarep() -> bool {
 }
 
 async fn check_datarep() -> Result<Value, String> {
-    let has_key = profiles::get_datarep_api_key().is_some();
+    let stored_key = profiles::get_datarep_api_key();
 
     let mut healthy = datarep_health_check().await;
 
@@ -378,20 +378,31 @@ async fn check_datarep() -> Result<Value, String> {
         }
     }
 
-    if healthy && has_key {
+    if !healthy {
+        return Ok(json!({
+            "status": "not_running",
+            "message": "Could not start the data connector. The app may need to be reinstalled."
+        }));
+    }
+
+    // Verify the stored key actually works against the running server
+    let key_valid = if let Some(ref key) = stored_key {
+        let client = crate::datarep_client::DatarepClient::new(key.clone());
+        client.health().await.unwrap_or(false)
+            && client.list_sources().await.is_ok()
+    } else {
+        false
+    };
+
+    if key_valid {
         Ok(json!({
             "status": "ready",
             "message": "Data connector is running and ready."
         }))
-    } else if healthy && !has_key {
+    } else {
         Ok(json!({
             "status": "needs_registration",
             "message": "Data connector is running but needs to be registered. Call setup_datarep to register."
-        }))
-    } else {
-        Ok(json!({
-            "status": "not_running",
-            "message": "Could not start the data connector. The app may need to be reinstalled."
         }))
     }
 }
@@ -462,7 +473,7 @@ async fn register_datarep_source(tool_input: &Value) -> Result<Value, String> {
         .ok_or("Missing 'name' parameter")?;
     let source_type = tool_input["source_type"]
         .as_str()
-        .unwrap_or("auto");
+        .unwrap_or("discovered");
     let config = tool_input
         .get("config")
         .cloned()
