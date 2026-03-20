@@ -337,20 +337,19 @@ async fn auto_start_datarep() -> bool {
     // for agent-driven operations (recipe creation during onboarding).
     // The user's JWT acts as the API key; the proxy validates it and
     // forwards to Anthropic with the real key.
-    let mut start_cmd = build_datarep_command(&resolved, &["start", "--daemon"]);
+    let mut start_cmd = build_datarep_command(&resolved, &["start"]);
     if let Some(auth_token) = profiles::get_active_auth_token() {
         start_cmd
             .env("ANTHROPIC_BASE_URL", "https://thyself-api.jfru.workers.dev")
             .env("ANTHROPIC_API_KEY", &auth_token);
     }
 
-    let start_result = start_cmd
+    let spawn_result = start_cmd
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .status()
-        .await;
+        .spawn();
 
-    if start_result.is_err() {
+    if spawn_result.is_err() {
         return false;
     }
 
@@ -409,17 +408,63 @@ async fn check_datarep() -> Result<Value, String> {
 }
 
 async fn setup_datarep() -> Result<Value, String> {
+    // Ensure the server is running
+    if !datarep_health_check().await {
+        auto_start_datarep().await;
+        if !datarep_health_check().await {
+            return Err("datarep server is not running and could not be started.".to_string());
+        }
+    }
+
+    // Register via the HTTP API — the server's own connection handles the write,
+    // so the key is immediately valid for subsequent requests. No stop/restart needed.
+    let client = reqwest::Client::new();
+    let resp = client
+        .post("http://127.0.0.1:7080/admin/register-app")
+        .json(&serde_json::json!({
+            "name": "thyself",
+            "allowed_sources": ["imessage", "whatsapp", "gmail", "chatgpt"]
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("Failed to register app via HTTP: {}", e))?;
+
+    if !resp.status().is_success() {
+        // Fallback to CLI registration for older datarep versions
+        return setup_datarep_via_cli().await;
+    }
+
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse register-app response: {}", e))?;
+
+    let api_key = body["api_key"]
+        .as_str()
+        .ok_or("No api_key in register-app response")?
+        .to_string();
+
+    if let Some(profile_id) = profiles::get_active_profile_id() {
+        profiles::set_datarep_api_key(&profile_id, &api_key)?;
+    }
+
+    Ok(json!({
+        "status": "registered",
+        "message": "Thyself is registered with datarep. API key saved to profile.",
+    }))
+}
+
+/// Fallback for older datarep versions that don't have the HTTP registration endpoint.
+async fn setup_datarep_via_cli() -> Result<Value, String> {
     let resolved = resolve_datarep(false).await
         .ok_or("datarep is not installed. Call check_datarep first.")?;
 
-    // Stop any running server — try the CLI command first, then force-kill on port
+    // Force-kill the server so the CLI writes to a quiescent database
     let _ = build_datarep_command(&resolved, &["stop"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
         .await;
-    // Force-kill anything still on port 7080 (the CLI stop relies on a PID file
-    // which may not exist if the server was spawned without --daemon)
     let _ = tokio::process::Command::new("sh")
         .args(["-c", "lsof -ti :7080 | xargs kill -9 2>/dev/null"])
         .stdout(std::process::Stdio::null())
