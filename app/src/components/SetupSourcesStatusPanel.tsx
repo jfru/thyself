@@ -31,7 +31,7 @@ const KNOWN_SOURCES: Record<
 > = {
   imessage: { name: "iMessage", icon: MessageCircle, syncKeys: ["imessage"] },
   whatsapp: {
-    name: "WhatsApp (Desktop)",
+    name: "WhatsApp",
     icon: MessageSquareText,
     syncKeys: ["whatsapp_desktop", "whatsapp"],
   },

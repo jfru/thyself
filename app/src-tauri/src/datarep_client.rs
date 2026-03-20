@@ -339,6 +339,12 @@ impl DatarepClient {
             .await
             .map_err(|e| format!("datarep /get failed: {}", e))?;
 
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!("datarep /get returned {}: {}", status, text));
+        }
+
         self.parse_sse_stream(resp).await
     }
 
@@ -470,7 +476,8 @@ impl DatarepClient {
             }
         }
 
-        Err("SSE stream ended without a result or question event".to_string())
+        let tail = if buffer.len() > 500 { &buffer[buffer.len()-500..] } else { &buffer };
+        Err(format!("SSE stream ended without a result or question event. Last output: {}", tail.trim()))
     }
 
     fn parse_response_value(

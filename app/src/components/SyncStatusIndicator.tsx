@@ -106,7 +106,7 @@ export function SyncStatusIndicator() {
             imessage: "iMessage",
             whatsapp_desktop: "WhatsApp (Desktop)",
             whatsapp_web: "WhatsApp (Web)",
-            whatsapp: "WhatsApp (Desktop)",
+            whatsapp: "WhatsApp",
             apple_mail: "Apple Mail",
             apple_mail_v1: "Apple Mail",
           };
