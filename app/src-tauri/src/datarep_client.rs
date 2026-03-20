@@ -203,11 +203,15 @@ impl DatarepClient {
         if status.is_success() || status.as_u16() == 409 {
             Ok(body)
         } else {
-            Err(format!(
-                "datarep source registration failed ({}): {}",
-                status,
-                body.get("detail").and_then(|d| d.as_str()).unwrap_or("unknown error")
-            ))
+            let detail = body.get("detail").and_then(|d| d.as_str()).unwrap_or("unknown error");
+            if status.as_u16() == 400 && detail.contains("UNIQUE constraint") {
+                Ok(body)
+            } else {
+                Err(format!(
+                    "datarep source registration failed ({}): {}",
+                    status, detail
+                ))
+            }
         }
     }
 

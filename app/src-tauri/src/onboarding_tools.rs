@@ -480,8 +480,20 @@ async fn register_datarep_source(tool_input: &Value) -> Result<Value, String> {
         .unwrap_or(json!({}));
 
     let client = DatarepClient::from_profile()?;
-    let result = client.register_source(name, source_type, config).await?;
-    Ok(result)
+    let result = client.register_source(name, source_type, config.clone()).await;
+
+    match result {
+        Ok(val) => Ok(val),
+        Err(ref e) if e.contains("401") || e.contains("Unauthorized") => {
+            eprintln!("[datarep] register_source got 401, re-registering app and retrying...");
+            setup_datarep().await?;
+            let client = DatarepClient::from_profile()?;
+            client.register_source(name, source_type, config).await.map_err(|e2| {
+                format!("datarep source registration failed after re-registration: {}", e2)
+            })
+        }
+        Err(e) => Err(e),
+    }
 }
 
 async fn datarep_scan(tool_input: &Value) -> Result<Value, String> {
