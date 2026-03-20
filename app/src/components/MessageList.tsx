@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactElement } from "react";
 import { Info } from "lucide-react";
 import type {
   Message,
@@ -108,49 +108,78 @@ export function MessageList({ messages, isStreaming, onAction, onEditMessage, is
   const hasMessagesAfterLastSystem = lastSystemIdx >= 0 && lastSystemIdx < messages.length - 1;
   const floatCtaToBottom = hasMessagesAfterLastSystem && !isReadOnly;
 
+  // Group messages into "turns": each turn starts with a user message and includes
+  // all following assistant messages until the next user or system message.
+  // Wrapping each turn in a container div makes CSS sticky work correctly:
+  // the user bubble sticks at the top of the viewport but is constrained within
+  // its turn container, so the next turn's user bubble naturally pushes it off.
+  const sections: ReactElement[] = [];
+  let turnChildren: ReactElement[] = [];
+  let turnKey = "";
+
+  function flushTurn() {
+    if (turnChildren.length > 0) {
+      sections.push(<div key={turnKey}>{turnChildren}</div>);
+      turnChildren = [];
+      turnKey = "";
+    }
+  }
+
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+
+    if (msg.role === "system") {
+      flushTurn();
+      if (i === lastSystemIdx && floatCtaToBottom) continue;
+      const isLastSystem = i === lastSystemIdx;
+      const hasMessagesAfter = i < messages.length - 1;
+      const showButton = isLastSystem && !hasMessagesAfter && !isStreaming && !isReadOnly;
+      sections.push(
+        <SystemMessageBubble
+          key={`msg-${i}`}
+          message={msg}
+          showButton={showButton}
+          onAction={onAction}
+        />
+      );
+    } else if (msg.role === "user") {
+      flushTurn();
+      turnKey = `turn-${i}`;
+      const um = msg as UserMessageType;
+      turnChildren.push(
+        <UserMessage
+          key={`msg-${i}`}
+          content={um.content}
+          images={um.images}
+          files={um.files}
+          context={um.context}
+          timestamp={um.timestamp}
+          isEditable={!isReadOnly}
+          onEdit={onEditMessage ? (newContent, images, files) => onEditMessage(i, newContent, images, files) : undefined}
+          registerEditDropTarget={registerEditDropTarget}
+          unregisterEditDropTarget={unregisterEditDropTarget}
+          isTauriDragging={isTauriDragging}
+        />
+      );
+    } else {
+      // Assistant message — include in the current turn if one is open
+      const el = (
+        <div key={`msg-${i}`} className="px-4 py-4 max-w-3xl mx-auto">
+          <AgentResponse message={msg as AssistantMessage} />
+        </div>
+      );
+      if (turnChildren.length > 0) {
+        turnChildren.push(el);
+      } else {
+        sections.push(el);
+      }
+    }
+  }
+  flushTurn();
+
   return (
     <div className="pt-4 pb-6">
-      {messages.map((msg, i) => {
-        if (msg.role === "system") {
-          if (i === lastSystemIdx && floatCtaToBottom) return null;
-          const isLastSystem = i === lastSystemIdx;
-          const hasMessagesAfter = i < messages.length - 1;
-          const showButton = isLastSystem && !hasMessagesAfter && !isStreaming && !isReadOnly;
-          return (
-            <SystemMessageBubble
-              key={`msg-${i}`}
-              message={msg}
-              showButton={showButton}
-              onAction={onAction}
-            />
-          );
-        }
-
-        if (msg.role === "user") {
-          const um = msg as UserMessageType;
-          return (
-            <UserMessage
-              key={`msg-${i}`}
-              content={um.content}
-              images={um.images}
-              files={um.files}
-              context={um.context}
-              timestamp={um.timestamp}
-              isEditable={!isReadOnly}
-              onEdit={onEditMessage ? (newContent, images, files) => onEditMessage(i, newContent, images, files) : undefined}
-              registerEditDropTarget={registerEditDropTarget}
-              unregisterEditDropTarget={unregisterEditDropTarget}
-              isTauriDragging={isTauriDragging}
-            />
-          );
-        }
-
-        return (
-          <div key={`msg-${i}`} className="px-4 py-4 max-w-3xl mx-auto">
-            <AgentResponse message={msg as AssistantMessage} />
-          </div>
-        );
-      })}
+      {sections}
       {lastSystemMsg && floatCtaToBottom && (
         <SystemMessageBubble
           key={`msg-${lastSystemIdx}-bottom`}
