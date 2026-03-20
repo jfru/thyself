@@ -67,6 +67,7 @@ pub async fn start_dev_server() {
         .route("/api/data_dir", get(handle_data_dir))
         .route("/api/tool_defs", get(handle_tool_defs))
         .route("/api/sync_status", get(handle_sync_status))
+        .route("/api/trigger_manual_sync", post(handle_trigger_manual_sync))
         .route("/api/health", get(handle_health))
         .route("/api/cmd_debug_log", post(handle_debug_log))
         .route("/api/list_profiles", get(handle_list_profiles))
@@ -551,6 +552,8 @@ async fn handle_sync_status(
         }));
     }
 
+    crate::db::expire_stale_running_sync_runs(conn);
+
     let has_progress_cols: bool = conn
         .prepare("PRAGMA table_info(sync_runs)")
         .ok()
@@ -633,6 +636,16 @@ async fn handle_sync_status(
         "history": history,
         "has_sync_runs": true
     }))
+}
+
+async fn handle_trigger_manual_sync() -> impl IntoResponse {
+    match crate::commands::spawn_manual_sync_background() {
+        Ok(v) => (StatusCode::OK, Json(v)),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": e})),
+        ),
+    }
 }
 
 // --- Profile handlers ---

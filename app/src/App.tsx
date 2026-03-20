@@ -194,9 +194,13 @@ const PRIVACY_LEARN_MORE =
 
 const SOURCE_SYNC_KEYS: Record<string, string[]> = {
   imessage: ["imessage"],
-  whatsapp: ["whatsapp_desktop", "whatsapp_web"],
+  whatsapp: ["whatsapp_desktop", "whatsapp"],
+  whatsapp_web: ["whatsapp_web"],
   gmail: ["gmail"],
   chatgpt: ["chatgpt"],
+  /** Profile source IDs from add_data_source — datarep stores sync_runs as apple_mail */
+  email_cantab: ["apple_mail", "apple_mail_v1"],
+  apple_mail: ["apple_mail", "apple_mail_v1"],
 };
 
 async function getConnectedSources(sources: string[]): Promise<string[]> {
@@ -222,8 +226,11 @@ async function getConnectedSources(sources: string[]): Promise<string[]> {
       const unclaimedCompleted = Object.entries(latest).filter(
         ([k, v]) => !claimedKeys.has(k) && v.status === "completed"
       );
-      if (unclaimedCompleted.length >= unmatched.length) {
-        connected.push(...unmatched);
+      // Only pair when there is exactly one unmatched profile source and at least
+      // one completed run with no claimed key (avoids marking everyone connected
+      // when counts don't line up).
+      if (unmatched.length === 1 && unclaimedCompleted.length >= 1) {
+        connected.push(unmatched[0]);
       }
     }
 
@@ -699,7 +706,8 @@ function MainApp({ profile, onProfileSwitch, onNewProfile, onDeleteProfile }: Ma
     async (sourceId: string, selectedSourcesOverride?: string[]) => {
       const sourceLabels: Record<string, string> = {
         imessage: "iMessage",
-        whatsapp: "WhatsApp",
+        whatsapp: "WhatsApp US (Desktop)",
+        whatsapp_web: "WhatsApp UK (Web)",
         gmail: "Gmail",
         chatgpt: "ChatGPT",
       };

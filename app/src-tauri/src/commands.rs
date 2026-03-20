@@ -940,6 +940,8 @@ pub async fn get_sync_status(state: State<'_, DbState>) -> Result<Value, String>
         }));
     }
 
+    crate::db::expire_stale_running_sync_runs(conn);
+
     let has_progress_cols: bool = conn
         .prepare("PRAGMA table_info(sync_runs)")
         .ok()
@@ -1036,6 +1038,34 @@ pub async fn get_sync_status(state: State<'_, DbState>) -> Result<Value, String>
         "history": history,
         "has_sync_runs": true
     }))
+}
+
+/// Spawn the same sync as launchd: `sync/run_sync.sh` (datarep if healthy, else legacy).
+pub fn spawn_manual_sync_background() -> Result<Value, String> {
+    let project_root = onboarding_tools::find_project_root_pub().ok_or_else(|| {
+        "Could not find project root (config.py not found). Run from the Thyself repo or use the installed app."
+            .to_string()
+    })?;
+    let script = project_root.join("sync/run_sync.sh");
+    if !script.exists() {
+        return Err(format!("Sync script not found: {}", script.display()));
+    }
+    std::process::Command::new("/bin/bash")
+        .arg(&script)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("Failed to start sync: {}", e))?;
+    Ok(json!({
+        "status": "started",
+        "message": "Sync started in the background. Refresh in a minute to see new rows in history."
+    }))
+}
+
+#[tauri::command]
+pub fn trigger_manual_sync() -> Result<Value, String> {
+    spawn_manual_sync_background()
 }
 
 #[tauri::command]

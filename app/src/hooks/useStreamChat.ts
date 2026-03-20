@@ -530,6 +530,10 @@ export function useStreamChat(opts: StreamChatOptions = {}) {
               }
             }
             if (um.images) {
+              const preamble = um.content
+                ? "[The following image(s) were shared by the user. Text below is their commentary.]"
+                : "[Image(s) shared by user.]";
+              parts.push({ type: "text", text: preamble });
               for (const img of um.images) {
                 parts.push({
                   type: "image",

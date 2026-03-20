@@ -18,6 +18,7 @@ summary-for-*
 generate_meditation.py
 app/test/*_session_script*.json
 corrections/
+local_tests/
 
 # Tauri app
 app/node_modules/

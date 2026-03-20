@@ -76,11 +76,15 @@ export async function authMiddleware(
   next: Next
 ) {
   const authHeader = c.req.header("Authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
+  const xApiKey = c.req.header("x-api-key");
+
+  const token = authHeader?.startsWith("Bearer ")
+    ? authHeader.slice(7)
+    : xApiKey;
+
+  if (!token) {
     return c.json({ error: "Missing authorization" }, 401);
   }
-
-  const token = authHeader.slice(7);
   const payload = await verifyJwt(token, c.env.JWT_SECRET);
   if (!payload) {
     return c.json({ error: "Invalid or expired token" }, 401);

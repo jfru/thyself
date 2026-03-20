@@ -10,7 +10,7 @@ const app = new Hono<AppEnv>();
 app.use("*", cors({
   origin: "*",
   allowMethods: ["GET", "POST", "OPTIONS"],
-  allowHeaders: ["Content-Type", "Authorization"],
+  allowHeaders: ["Content-Type", "Authorization", "x-api-key", "anthropic-version", "anthropic-beta"],
 }));
 
 app.get("/health", (c) => c.text("ok"));

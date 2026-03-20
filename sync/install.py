@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Install or uninstall the thyself weekly sync launchd job.
+Install or uninstall the thyself hourly sync launchd job.
 
 Generates the plist dynamically based on the current installation paths
 so it works on any machine without hardcoded user paths.
@@ -18,7 +18,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-PLIST_NAME = "com.thyself.weekly-sync.plist"
+PLIST_NAME = "com.thyself.sync.plist"
 LAUNCH_AGENTS_DIR = Path.home() / "Library" / "LaunchAgents"
 INSTALLED_PLIST = LAUNCH_AGENTS_DIR / PLIST_NAME
 
@@ -41,23 +41,15 @@ def generate_plist() -> str:
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.thyself.weekly-sync</string>
+    <string>com.thyself.sync</string>
 
     <key>ProgramArguments</key>
     <array>
         <string>{SYNC_SCRIPT}</string>
     </array>
 
-    <!-- Run every Sunday at 3:00 AM -->
-    <key>StartCalendarInterval</key>
-    <dict>
-        <key>Weekday</key>
-        <integer>0</integer>
-        <key>Hour</key>
-        <integer>3</integer>
-        <key>Minute</key>
-        <integer>0</integer>
-    </dict>
+    <key>StartInterval</key>
+    <integer>3600</integer>
 
     <key>StandardOutPath</key>
     <string>{LOG_DIR}/sync-stdout.log</string>
@@ -100,8 +92,8 @@ def install():
         print(f"Error loading plist: {result.stderr}")
         sys.exit(1)
 
-    print("Installed and loaded com.thyself.weekly-sync")
-    print("Sync will run every Sunday at 3:00 AM")
+    print("Installed and loaded com.thyself.sync")
+    print("Sync will run every hour")
     print(f"  Script: {SYNC_SCRIPT}")
     print(f"  Logs:   {LOG_DIR}/sync-*.log")
 
@@ -113,14 +105,14 @@ def uninstall():
             capture_output=True,
         )
         INSTALLED_PLIST.unlink()
-        print("Unloaded and removed com.thyself.weekly-sync")
+        print("Unloaded and removed com.thyself.sync")
     else:
         print("Not installed")
 
 
 def status():
     result = subprocess.run(
-        ["launchctl", "list", "com.thyself.weekly-sync"],
+        ["launchctl", "list", "com.thyself.sync"],
         capture_output=True, text=True,
     )
     if result.returncode == 0:
@@ -134,7 +126,7 @@ def status():
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Manage thyself weekly sync launchd job")
+    parser = argparse.ArgumentParser(description="Manage thyself hourly sync launchd job")
     parser.add_argument("action", choices=["install", "uninstall", "status"])
     args = parser.parse_args()
 

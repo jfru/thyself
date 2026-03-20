@@ -126,6 +126,7 @@ pub fn run() {
             save_session_messages,
             close_and_summarize_session,
             get_sync_status,
+            trigger_manual_sync,
             list_profiles,
             cmd_create_profile,
             cmd_switch_profile,

@@ -216,6 +216,7 @@ pub async fn execute_onboarding_tool(
         "datarep_stream" => datarep_stream(tool_input).await,
         "datarep_auth" => datarep_auth(tool_input).await,
         "open_full_disk_access" => open_full_disk_access(),
+        "open_automation_settings" => open_automation_settings(),
         "restart_app" => restart_app(),
         "open_url" => open_url(tool_input),
         "start_portrait_build" => crate::commands::start_portrait_build().await,
@@ -261,18 +262,112 @@ async fn datarep_health_check() -> bool {
         .unwrap_or(false)
 }
 
+/// Returns (program, base_args) for invoking datarep.
+/// Tries: 1) `datarep` on PATH  2) `python3 -m datarep`
+/// If neither works and auto_install is true, runs `python3 -m pip install datarep`
+/// and retries.
+async fn resolve_datarep(auto_install: bool) -> Option<(String, Vec<String>)> {
+    // Try `datarep` on PATH
+    if let Ok(status) = tokio::process::Command::new("datarep")
+        .arg("--help")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .await
+    {
+        if status.success() {
+            return Some(("datarep".to_string(), vec![]));
+        }
+    }
+
+    // Try python3 -m datarep
+    if let Ok(status) = tokio::process::Command::new("python3")
+        .args(["-m", "datarep", "--help"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .await
+    {
+        if status.success() {
+            return Some(("python3".to_string(), vec!["-m".to_string(), "datarep".to_string()]));
+        }
+    }
+
+    if !auto_install {
+        return None;
+    }
+
+    // Auto-install datarep via pip
+    eprintln!("[datarep] Not found, installing via pip...");
+    let install = tokio::process::Command::new("python3")
+        .args(["-m", "pip", "install", "--user", "-q", "datarep"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .status()
+        .await;
+
+    if install.map(|s| s.success()).unwrap_or(false) {
+        eprintln!("[datarep] pip install succeeded");
+        // After pip install --user, the script goes to ~/Library/Python/3.x/bin/datarep
+        // which may not be on PATH, so use python3 -m datarep
+        if let Ok(status) = tokio::process::Command::new("python3")
+            .args(["-m", "datarep", "--help"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .await
+        {
+            if status.success() {
+                return Some(("python3".to_string(), vec!["-m".to_string(), "datarep".to_string()]));
+            }
+        }
+    } else {
+        eprintln!("[datarep] pip install failed");
+    }
+
+    None
+}
+
+fn build_datarep_command(resolved: &(String, Vec<String>), args: &[&str]) -> tokio::process::Command {
+    let (program, base_args) = resolved;
+    let mut cmd = tokio::process::Command::new(program);
+    for a in base_args {
+        cmd.arg(a);
+    }
+    for a in args {
+        cmd.arg(*a);
+    }
+    cmd
+}
+
 async fn auto_start_datarep() -> bool {
-    // Try `datarep init` first (idempotent, ensures config exists)
-    let _ = tokio::process::Command::new("datarep")
-        .args(["init"])
+    let resolved = match resolve_datarep(true).await {
+        Some(r) => r,
+        None => {
+            eprintln!("[datarep] Could not find or install datarep");
+            return false;
+        }
+    };
+
+    // `datarep init` — idempotent, ensures config exists
+    let _ = build_datarep_command(&resolved, &["init"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
         .await;
 
-    // Spawn `datarep start` in the background
-    let spawn_result = tokio::process::Command::new("datarep")
-        .args(["start"])
+    // Pass the Thyself proxy credentials so datarep can use the LLM
+    // for agent-driven operations (recipe creation during onboarding).
+    // The user's JWT acts as the API key; the proxy validates it and
+    // forwards to Anthropic with the real key.
+    let mut start_cmd = build_datarep_command(&resolved, &["start"]);
+    if let Some(auth_token) = profiles::get_active_auth_token() {
+        start_cmd
+            .env("ANTHROPIC_BASE_URL", "https://thyself-api.jfru.workers.dev")
+            .env("ANTHROPIC_API_KEY", &auth_token);
+    }
+
+    let spawn_result = start_cmd
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn();
@@ -325,11 +420,16 @@ async fn check_datarep() -> Result<Value, String> {
 }
 
 async fn setup_datarep() -> Result<Value, String> {
-    let output = tokio::process::Command::new("datarep")
-        .args(["app", "register", "thyself", "--sources", "imessage,whatsapp,gmail,chatgpt"])
+    let resolved = resolve_datarep(false).await
+        .ok_or("datarep is not installed. Call check_datarep first.")?;
+
+    let output = build_datarep_command(
+            &resolved,
+            &["app", "register", "thyself", "--sources", "imessage,whatsapp,gmail,chatgpt"],
+        )
         .output()
         .await
-        .map_err(|e| format!("Failed to run datarep: {}. Is datarep installed?", e))?;
+        .map_err(|e| format!("Failed to run datarep: {}", e))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -881,6 +981,19 @@ fn open_full_disk_access() -> Result<Value, String> {
     }))
 }
 
+fn open_automation_settings() -> Result<Value, String> {
+    let url = "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Automation";
+    std::process::Command::new("open")
+        .arg(url)
+        .spawn()
+        .map_err(|e| format!("Failed to open System Settings: {}", e))?;
+
+    Ok(json!({
+        "status": "opened",
+        "message": "Opened System Settings → Privacy & Security → Automation. Find the Thyself (or python3) entry and toggle Safari ON so the app can access WhatsApp Web and ChatGPT data.",
+    }))
+}
+
 fn open_url(tool_input: &Value) -> Result<Value, String> {
     let url = tool_input["url"]
         .as_str()
@@ -901,8 +1014,8 @@ fn open_url(tool_input: &Value) -> Result<Value, String> {
 // Weekly sync schedule (launchd)
 // ---------------------------------------------------------------------------
 
-const PLIST_LABEL: &str = "com.thyself.weekly-sync";
-const PLIST_NAME: &str = "com.thyself.weekly-sync.plist";
+const PLIST_LABEL: &str = "com.thyself.sync";
+const PLIST_NAME: &str = "com.thyself.sync.plist";
 
 fn launch_agents_dir() -> PathBuf {
     home_dir().join("Library/LaunchAgents")
@@ -942,15 +1055,8 @@ fn generate_sync_plist(project_root: &std::path::Path) -> String {
         <string>{script}</string>
     </array>
 
-    <key>StartCalendarInterval</key>
-    <dict>
-        <key>Weekday</key>
-        <integer>0</integer>
-        <key>Hour</key>
-        <integer>3</integer>
-        <key>Minute</key>
-        <integer>0</integer>
-    </dict>
+    <key>StartInterval</key>
+    <integer>3600</integer>
 
     <key>StandardOutPath</key>
     <string>{log_dir}/sync-stdout.log</string>
@@ -1028,7 +1134,7 @@ fn do_install_weekly_sync() -> Result<Value, String> {
 
     Ok(json!({
         "status": "installed",
-        "schedule": "Every Sunday at 3:00 AM",
+        "schedule": "Every hour",
         "plist_path": plist_path.display().to_string(),
         "sync_script": sync_script.display().to_string(),
     }))
@@ -1050,7 +1156,7 @@ fn check_sync_schedule() -> Result<Value, String> {
         Ok(json!({
             "status": "installed",
             "loaded": true,
-            "schedule": "Every Sunday at 3:00 AM",
+            "schedule": "Every hour",
             "plist_path": plist_path.display().to_string(),
         }))
     } else if plist_path.exists() {
@@ -1096,7 +1202,7 @@ fn uninstall_weekly_sync() -> Result<Value, String> {
 fn ensure_sync_installed() {
     match do_install_weekly_sync() {
         Ok(_) => eprintln!("[sync] Weekly sync schedule installed"),
-        Err(e) => eprintln!("[sync] Could not install weekly sync schedule: {}", e),
+        Err(e) => eprintln!("[sync] Could not install hourly sync schedule: {}", e),
     }
 }
 
@@ -1279,6 +1385,15 @@ pub fn get_onboarding_tool_definitions() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "open_automation_settings",
+            "description": "Opens macOS System Settings to the Automation privacy page. Call this when Safari-dependent sources (WhatsApp Web, ChatGPT) fail with an Automation permission error. The user needs to find the Thyself or python3 entry and toggle Safari ON.",
+            "input_schema": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }),
+        json!({
             "name": "restart_app",
             "description": "Show a restart button to the user. Call this when the app needs to restart (e.g. after granting Full Disk Access and re-scan still fails). A restart button will appear in the chat for the user to click.",
             "input_schema": {
@@ -1312,7 +1427,7 @@ pub fn get_onboarding_tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "install_weekly_sync",
-            "description": "Install the automated weekly sync schedule. Sets up a macOS launchd job that runs every Sunday at 3 AM to sync all connected data sources. This is installed automatically after the first successful import, but you can call it explicitly to reinstall or verify. Returns the schedule details and file paths.",
+            "description": "Install the automated hourly sync schedule. Sets up a macOS launchd job that runs every hour to sync all connected data sources. This is installed automatically after the first successful import, but you can call it explicitly to reinstall or verify. Returns the schedule details and file paths.",
             "input_schema": {
                 "type": "object",
                 "properties": {},
@@ -1321,7 +1436,7 @@ pub fn get_onboarding_tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "check_sync_schedule",
-            "description": "Check whether the automated weekly sync is installed and running. Returns status: 'installed' (with loaded=true/false) or 'not_installed'.",
+            "description": "Check whether the automated hourly sync is installed and running. Returns status: 'installed' (with loaded=true/false) or 'not_installed'.",
             "input_schema": {
                 "type": "object",
                 "properties": {},
@@ -1330,7 +1445,7 @@ pub fn get_onboarding_tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "uninstall_weekly_sync",
-            "description": "Remove the automated weekly sync schedule. Unloads and deletes the launchd job. Only call this if the user explicitly asks to disable automatic syncing.",
+            "description": "Remove the automated hourly sync schedule. Unloads and deletes the launchd job. Only call this if the user explicitly asks to disable automatic syncing.",
             "input_schema": {
                 "type": "object",
                 "properties": {},

@@ -133,10 +133,14 @@ impl DatarepClient {
         &self,
         source: &str,
         query: Option<&str>,
+        unattended: bool,
     ) -> Result<DatarepResponse, String> {
         let mut body = serde_json::json!({ "source": source });
         if let Some(q) = query {
             body["query"] = Value::String(q.to_string());
+        }
+        if unattended {
+            body["unattended"] = Value::Bool(true);
         }
 
         let resp = self

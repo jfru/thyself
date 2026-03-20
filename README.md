@@ -149,6 +149,11 @@ These scripts still power the data layer and can be run independently:
 # Weekly sync orchestrator (profile-aware)
 python sync/run.py
 
+# When datarep is running (port 7080), launchd uses datarep instead:
+# - Seeds datarep sync cursors from thyself.db if you migrated from legacy sync
+# - Passes unattended mode so volume confirmations do not block scheduled runs
+python sync/run_datarep.py
+
 # Run one source only
 python sync/run.py --source gmail
 
@@ -157,6 +162,8 @@ python sync/install.py install   # Generate plist and load
 python sync/install.py status    # Check if installed
 python sync/install.py uninstall # Remove
 ```
+
+**Datarep:** Install or upgrade the local package so `/sync` supports `unattended` and seeding works with your `recipes` table: `pip install -e /path/to/datarep` (or your checkout).
 
 Other commonly used scripts:
 

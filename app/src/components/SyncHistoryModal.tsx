@@ -4,6 +4,8 @@ import type { SyncStatus, SyncRun } from "../lib/types";
 interface SyncHistoryModalProps {
   syncStatus: SyncStatus;
   onClose: () => void;
+  onManualSync: () => Promise<void>;
+  manualSyncBusy: boolean;
 }
 
 const SOURCE_META: Record<string, string> = {
@@ -31,6 +33,7 @@ function timeAgo(iso: string | null): string {
   if (!iso) return "never";
   const ms = Date.now() - new Date(iso + "Z").getTime();
   const mins = Math.floor(ms / 60000);
+  if (mins < 1) return "just now";
   if (mins < 60) return `${mins}m ago`;
   const hours = Math.floor(mins / 60);
   if (hours < 24) return `${hours}h ago`;
@@ -71,7 +74,12 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-export function SyncHistoryModal({ syncStatus, onClose }: SyncHistoryModalProps) {
+export function SyncHistoryModal({
+  syncStatus,
+  onClose,
+  onManualSync,
+  manualSyncBusy,
+}: SyncHistoryModalProps) {
   const { latest_by_source, history } = syncStatus;
 
   const allLatest = Object.values(latest_by_source);
@@ -81,6 +89,10 @@ export function SyncHistoryModal({ syncStatus, onClose }: SyncHistoryModalProps)
     }
     return best;
   }, null);
+
+  const anyRunning = allLatest.some((r) => r.status === "running");
+  /** Most recent completed run (history is newest-first). */
+  const lastCompleted = history.find((r) => r.status === "completed") ?? null;
 
   return (
     <div
@@ -106,10 +118,28 @@ export function SyncHistoryModal({ syncStatus, onClose }: SyncHistoryModalProps)
         {/* Summary */}
         <div className="px-5 py-3 border-b border-zinc-800/50">
           <p className="text-xs text-zinc-500">
-            {mostRecent
-              ? `Last synced ${timeAgo(mostRecent.started_at)}`
-              : "No syncs recorded yet"}
-            {mostRecent && " · Next sync Sunday 3:00 AM"}
+            {anyRunning ? (
+              <>
+                Sync in progress
+                {mostRecent?.started_at
+                  ? ` — started ${timeAgo(mostRecent.started_at)}`
+                  : ""}
+                . You can close this panel; the pill updates when each source
+                finishes.
+              </>
+            ) : lastCompleted ? (
+              <>
+                Last completed sync {timeAgo(lastCompleted.finished_at ?? lastCompleted.started_at)}
+                {" · Syncs every hour"}
+              </>
+            ) : mostRecent ? (
+              <>
+                Last run {timeAgo(mostRecent.started_at)}
+                {" · Syncs every hour"}
+              </>
+            ) : (
+              "No syncs recorded yet"
+            )}
           </p>
         </div>
 
@@ -124,8 +154,8 @@ export function SyncHistoryModal({ syncStatus, onClose }: SyncHistoryModalProps)
                       <th className="text-left px-3 py-2 font-medium">
                         Source
                       </th>
-                      <th className="text-right px-3 py-2 font-medium">
-                        Messages
+                      <th className="text-right px-3 py-2 font-medium" title="Rows inserted in that run (incremental); not your total stored messages">
+                        Added
                       </th>
                       <th className="text-left px-3 py-2 font-medium">
                         Status
@@ -172,12 +202,27 @@ export function SyncHistoryModal({ syncStatus, onClose }: SyncHistoryModalProps)
 
           {history.length === 0 && (
             <div className="px-5 py-8 text-center text-zinc-600 text-sm">
-              No sync runs yet. The first sync will run Sunday at 3:00 AM,
+              No sync runs yet. Sync runs every hour,
               <br />
-              or run manually with{" "}
-              <code className="text-zinc-500">python sync/run.py</code>
+              or use <strong className="text-zinc-400">Run sync now</strong> below.
             </div>
           )}
+        </div>
+
+        {/* Manual sync — same as weekly launchd job (datarep if running, else legacy) */}
+        <div className="px-5 py-4 border-t border-zinc-800 flex flex-col gap-2">
+          <button
+            type="button"
+            disabled={manualSyncBusy}
+            onClick={() => void onManualSync()}
+            className="w-full py-2.5 rounded-lg text-sm font-medium bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed text-zinc-100 border border-zinc-700 transition-colors"
+          >
+            {manualSyncBusy ? "Starting sync…" : "Run sync now"}
+          </button>
+          <p className="text-[11px] text-zinc-600 text-center leading-relaxed">
+            Runs in the background (may take several minutes). Close this panel
+            and reopen later to see new rows.
+          </p>
         </div>
       </div>
     </div>

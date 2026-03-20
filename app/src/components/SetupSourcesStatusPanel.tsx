@@ -31,12 +31,27 @@ const KNOWN_SOURCES: Record<
 > = {
   imessage: { name: "iMessage", icon: MessageCircle, syncKeys: ["imessage"] },
   whatsapp: {
-    name: "WhatsApp",
+    name: "WhatsApp US",
     icon: MessageSquareText,
-    syncKeys: ["whatsapp_desktop", "whatsapp_web"],
+    syncKeys: ["whatsapp_desktop", "whatsapp"],
+  },
+  whatsapp_web: {
+    name: "WhatsApp UK",
+    icon: MessageSquareText,
+    syncKeys: ["whatsapp_web"],
   },
   gmail: { name: "Gmail", icon: Mail, syncKeys: ["gmail"] },
   chatgpt: { name: "ChatGPT", icon: BrainCircuit, syncKeys: ["chatgpt"] },
+  email_cantab: {
+    name: "Cantab email",
+    icon: Mail,
+    syncKeys: ["apple_mail", "apple_mail_v1"],
+  },
+  apple_mail: {
+    name: "Apple Mail",
+    icon: Mail,
+    syncKeys: ["apple_mail", "apple_mail_v1"],
+  },
 };
 
 function sourceDisplayName(id: string): string {
@@ -73,7 +88,7 @@ function statusLabel(
   if (run.status === "running")
     return { text: "Connecting...", tone: "text-amber-400" };
   if (run.status === "failed")
-    return { text: "Not connected", tone: "text-zinc-500" };
+    return { text: "Sync failed", tone: "text-red-400" };
   return { text: "Connected", tone: "text-emerald-400" };
 }
 
@@ -139,6 +154,9 @@ export function SetupSourcesStatusPanel({
   const connectingCount = sourceStatuses.filter(
     (s) => s.text === "Connecting..."
   ).length;
+  const failedCount = sourceStatuses.filter(
+    (s) => s.text === "Sync failed"
+  ).length;
 
   if (selectedSources.length === 0) {
     return (
@@ -198,6 +216,11 @@ export function SetupSourcesStatusPanel({
                 · {connectingCount} connecting
               </span>
             )}
+            {failedCount > 0 && (
+              <span className="text-red-400/80 ml-1">
+                · {failedCount} failed
+              </span>
+            )}
           </span>
           <div className="flex-1" />
           <span
@@ -230,7 +253,8 @@ export function SetupSourcesStatusPanel({
                 latest.progress_total > 0
                   ? `${latest.progress_processed}/${latest.progress_total}`
                   : null;
-              const canStartSetup = status.text === "Not connected";
+              const canStartSetup =
+                status.text === "Not connected" || status.text === "Sync failed";
 
               return (
                 <div
@@ -266,7 +290,9 @@ export function SetupSourcesStatusPanel({
                           ? "bg-emerald-400"
                           : status.text === "Connecting..."
                             ? "bg-amber-400 animate-pulse"
-                            : "bg-zinc-500"
+                            : status.text === "Sync failed"
+                              ? "bg-red-400"
+                              : "bg-zinc-500"
                       }`}
                     />
                     <span className={`text-[11px] ${status.tone}`}>
